@@ -16,7 +16,8 @@ import numpy as np
 class FromGymnasium(embodied.Env):
 
     def __init__(self, env, obs_key="state", act_key="action",
-                 log_keys=(), log_image=False, image_key="log/image"):
+                 log_keys=(), log_image=False, image_key="log/image",
+                 worker_index=0, video_every=0):
         self._env = env
         self._obs_dict = hasattr(self._env.observation_space, "spaces")
         self._act_dict = hasattr(self._env.action_space, "spaces")
@@ -29,8 +30,23 @@ class FromGymnasium(embodied.Env):
         # train loop turns into a video for worker 0.
         self._log_image = bool(log_image)
         self._image_key = image_key
+        # Periodic rendering: to keep the cost negligible, only worker 0 ever
+        # renders, and only once every `video_every` episodes. Every other env
+        # (and every non-recording episode) emits a cheap zero placeholder of
+        # the same shape so the observation space stays consistent across envs.
+        self._worker_index = int(worker_index)
+        self._video_every = int(video_every)
+        self._episode = -1          # incremented to 0 on the first reset
+        self._recording = False
         self._done = True
         self._info = None
+
+    def _should_record(self):
+        if not self._log_image or self._worker_index != 0:
+            return False
+        if self._video_every <= 0:
+            return True  # record every episode (worker 0 only)
+        return (self._episode % self._video_every) == 0
 
     @property
     def env(self):
@@ -73,6 +89,8 @@ class FromGymnasium(embodied.Env):
     def step(self, action):
         if action["reset"] or self._done:
             self._done = False
+            self._episode += 1
+            self._recording = self._should_record()
             obs, self._info = self._env.reset()
             return self._obs(obs, 0.0, is_first=True)
         if self._act_dict:
@@ -101,10 +119,15 @@ class FromGymnasium(embodied.Env):
         info = self._info or {}
         for key in self._log_keys:
             obs[f"log/{key}"] = np.float32(float(info.get(key, 0.0)))
-        # Inject the third-person video frame as log/image.
+        # Inject the third-person video frame as log/image. Render only during
+        # a recording episode (worker 0, every `video_every` episodes); emit a
+        # zero placeholder otherwise so the shape is identical across all envs.
         if self._log_image:
-            obs[self._image_key] = np.asarray(
-                self._env.render_frame(), dtype=np.uint8)
+            if self._recording:
+                frame = np.asarray(self._env.render_frame(), dtype=np.uint8)
+            else:
+                frame = np.zeros(self._env.video_shape, dtype=np.uint8)
+            obs[self._image_key] = frame
         return obs
 
     def render(self):
@@ -144,7 +167,7 @@ class FromGymnasium(embodied.Env):
         return elements.Space(space.dtype, space.shape, space.low, space.high)
 
 
-def make_drone_nav(task, log_image=False, **kwargs):
+def make_drone_nav(task, log_image=False, video_every=20, index=0, **kwargs):
     """Factory used by DreamerV3's `make_env` for the ``drone`` suite.
 
     ``task`` selects a preset; everything after the first ``_`` is the preset
@@ -154,17 +177,27 @@ def make_drone_nav(task, log_image=False, **kwargs):
     Parameters
     ----------
     log_image : bool
-        If True, render a third-person RGB frame each step and expose it as the
-        ``log/image`` observation, which DreamerV3 logs as a video (worker 0).
-        Adds rendering + replay cost, so keep it off for the bulk of training
-        and enable it on a dedicated short run when you want to *see* behavior.
+        If True, expose a ``log/image`` observation that DreamerV3 logs as a
+        video. The key is present on *every* env (so the spaces stay
+        consistent), but frames are only rendered on worker 0 during recording
+        episodes; all other steps emit a cheap zero placeholder.
+    video_every : int
+        Render one episode every ``video_every`` episodes (worker 0 only).
+        Larger -> cheaper. Set to 0 to record every episode on worker 0.
+    index : int
+        The parallel env/worker index supplied by DreamerV3's ``make_env``.
+        Only worker 0 renders, so the bulk of envs pay no rendering cost.
     """
     from drone_nav.envs.nav_aviary import NavigationAviary
 
-    env = NavigationAviary(log_video=log_image, **kwargs)
+    # Only worker 0 ever needs to render frames; let the rest skip the PyBullet
+    # camera setup entirely.
+    env = NavigationAviary(log_video=bool(log_image) and index == 0, **kwargs)
     return FromGymnasium(
         env,
         obs_key="state",
         log_keys=("distance", "is_success"),
         log_image=log_image,
+        worker_index=index,
+        video_every=video_every,
     )
