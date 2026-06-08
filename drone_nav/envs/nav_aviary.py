@@ -52,7 +52,7 @@ class NavigationAviary(BaseRLAviary):
                  include_angular_velocity: bool = False,
                  # ---- logging / visualization ------------------------------
                  log_video: bool = False,
-                 video_size=(64, 64),
+                 video_size=(128, 128),
                  # ---- reward weights ---------------------------------------
                  reward_cfg=None,
                  ):
@@ -251,6 +251,28 @@ class NavigationAviary(BaseRLAviary):
     # Visualization
     ################################################################################
 
+    def _addObstacles(self):
+        """Add a visual-only marker at the goal so it is visible in renders.
+
+        Called by BaseAviary during housekeeping (after the plane and drone are
+        loaded). The marker has no mass and no collision shape, so it does not
+        affect the physics or the drone state vector. TARGET_POS is set by
+        `_resample_task()` before `super().reset()` triggers housekeeping.
+        """
+        super()._addObstacles()
+        try:
+            vis = p.createVisualShape(
+                p.GEOM_SPHERE, radius=0.12, rgbaColor=[1.0, 0.1, 0.1, 1.0],
+                physicsClientId=self.CLIENT)
+            self._goal_marker_id = p.createMultiBody(
+                baseMass=0,
+                baseCollisionShapeIndex=-1,
+                baseVisualShapeIndex=vis,
+                basePosition=self.TARGET_POS.tolist(),
+                physicsClientId=self.CLIENT)
+        except Exception:
+            self._goal_marker_id = None
+
     @property
     def video_shape(self):
         """(H, W, 3) shape of the third-person RGB frames."""
@@ -265,15 +287,22 @@ class NavigationAviary(BaseRLAviary):
         h, w = self.VIDEO_SIZE
         s = self._getDroneStateVector(0)
         drone_pos = s[0:3]
-        center = 0.5 * (drone_pos + self.TARGET_POS)
+        goal = self.TARGET_POS
+        # Frame both the drone and the goal: look at their midpoint and back
+        # the camera off proportionally to their separation so both stay in
+        # view (and the drone never collapses to a single pixel).
+        center = 0.5 * (drone_pos + goal)
+        sep = float(np.linalg.norm(goal - drone_pos))
+        distance = float(np.clip(1.6 + 0.9 * sep, 1.6, 6.0))
         view = p.computeViewMatrixFromYawPitchRoll(
-            distance=2.5, yaw=-30, pitch=-30, roll=0,
-            cameraTargetPosition=center, upAxisIndex=2,
+            distance=distance, yaw=50, pitch=-35, roll=0,
+            cameraTargetPosition=center.tolist(), upAxisIndex=2,
             physicsClientId=self.CLIENT)
         proj = p.computeProjectionMatrixFOV(
             fov=60.0, aspect=float(w) / float(h), nearVal=0.1, farVal=1000.0)
         _, _, rgba, _, _ = p.getCameraImage(
             width=w, height=h, viewMatrix=view, projectionMatrix=proj,
+            shadow=1, lightDirection=[1, 1, 1],
             renderer=p.ER_TINY_RENDERER, flags=p.ER_NO_SEGMENTATION_MASK,
             physicsClientId=self.CLIENT)
         rgb = np.reshape(rgba, (h, w, 4))[:, :, :3]
