@@ -74,6 +74,7 @@ class FromGymnasium(embodied.Env):
         if self._log_image:
             extra[self._image_key] = elements.Space(
                 np.uint8, self._env.video_shape)
+            extra["log/video_recorded"] = elements.Space(np.float32)
         return {**spaces, **extra}
 
     @functools.cached_property
@@ -123,6 +124,7 @@ class FromGymnasium(embodied.Env):
         # a recording episode (worker 0, every `video_every` episodes); emit a
         # zero placeholder otherwise so the shape is identical across all envs.
         if self._log_image:
+            obs["log/video_recorded"] = np.float32(1.0 if self._recording else 0.0)
             if self._recording:
                 frame = np.asarray(self._env.render_frame(), dtype=np.uint8)
             else:

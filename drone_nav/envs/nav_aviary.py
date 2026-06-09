@@ -17,6 +17,8 @@ Action (4-dim, ActionType.VEL):
       DSL-PID velocity controller normalizes it to a unit vector.
     * speed in [-1, 1] -> |speed| scales the target speed up to SPEED_LIMIT.
 """
+from collections import deque
+
 import numpy as np
 import pybullet as p
 from gymnasium import spaces
@@ -52,7 +54,8 @@ class NavigationAviary(BaseRLAviary):
                  include_angular_velocity: bool = False,
                  # ---- logging / visualization ------------------------------
                  log_video: bool = False,
-                 video_size=(128, 128),
+                 video_size=(192, 192),
+                 trail_length: int = 80,
                  # ---- reward weights ---------------------------------------
                  reward_cfg=None,
                  ):
@@ -69,6 +72,8 @@ class NavigationAviary(BaseRLAviary):
         # Visualization (third-person RGB frames for DreamerV3 log/image) -----
         self.LOG_VIDEO = bool(log_video)
         self.VIDEO_SIZE = (int(video_size[0]), int(video_size[1]))  # (H, W)
+        self.TRAIL_LENGTH = int(trail_length)
+        self._trail = deque(maxlen=self.TRAIL_LENGTH)
 
         self._fixed_goal = None if goal_pos is None else np.array(goal_pos, dtype=np.float32)
         self._fixed_start = None if start_pos is None else np.array(start_pos, dtype=np.float32)
@@ -139,6 +144,8 @@ class NavigationAviary(BaseRLAviary):
         state = self._getDroneStateVector(0)
         self._prev_dist = float(np.linalg.norm(self.TARGET_POS - state[0:3]))
         self._prev_action = None
+        self._trail.clear()
+        self._trail.append(state[0:3].copy())
         return obs, info
 
     ################################################################################
@@ -262,7 +269,7 @@ class NavigationAviary(BaseRLAviary):
         super()._addObstacles()
         try:
             vis = p.createVisualShape(
-                p.GEOM_SPHERE, radius=0.12, rgbaColor=[1.0, 0.1, 0.1, 1.0],
+                p.GEOM_SPHERE, radius=0.08, rgbaColor=[1.0, 0.1, 0.1, 1.0],
                 physicsClientId=self.CLIENT)
             self._goal_marker_id = p.createMultiBody(
                 baseMass=0,
@@ -278,33 +285,101 @@ class NavigationAviary(BaseRLAviary):
         """(H, W, 3) shape of the third-person RGB frames."""
         return (self.VIDEO_SIZE[0], self.VIDEO_SIZE[1], 3)
 
-    def render_frame(self):
-        """Render a third-person RGB frame following the drone and goal.
+    def _world_to_pixel(self, x, y):
+        (xl, xh), (yl, yh), _ = self.BOUNDS
+        h, w = self.VIDEO_SIZE
+        pad = 0.08
+        span_x = max(xh - xl, 1e-6)
+        span_y = max(yh - yl, 1e-6)
+        nx = (x - xl) / span_x
+        ny = (y - yl) / span_y
+        px = int(np.clip((pad + (1.0 - 2.0 * pad) * nx) * (w - 1), 0, w - 1))
+        py = int(np.clip((pad + (1.0 - 2.0 * pad) * (1.0 - ny)) * (h - 1), 0, h - 1))
+        return px, py
 
-        Returns a ``uint8`` array of shape ``video_shape`` suitable for the
-        DreamerV3 ``log/image`` key (logged as a video by the train loop).
+    def _draw_disc(self, image, cx, cy, radius, color):
+        h, w, _ = image.shape
+        x0 = max(0, cx - radius)
+        x1 = min(w - 1, cx + radius)
+        y0 = max(0, cy - radius)
+        y1 = min(h - 1, cy + radius)
+        yy, xx = np.ogrid[y0:y1 + 1, x0:x1 + 1]
+        mask = (xx - cx) ** 2 + (yy - cy) ** 2 <= radius ** 2
+        image[y0:y1 + 1, x0:x1 + 1][mask] = color
+
+    def _draw_line(self, image, p0, p1, color, thickness=1):
+        x0, y0 = p0
+        x1, y1 = p1
+        steps = int(max(abs(x1 - x0), abs(y1 - y0))) + 1
+        xs = np.linspace(x0, x1, steps).round().astype(int)
+        ys = np.linspace(y0, y1, steps).round().astype(int)
+        for x, y in zip(xs, ys):
+            self._draw_disc(image, int(x), int(y), thickness, color)
+
+    def _draw_grid(self, image):
+        (xl, xh), (yl, yh), _ = self.BOUNDS
+        step = 1.0
+        color = np.array([36, 40, 48], dtype=np.uint8)
+        x = np.ceil(xl / step) * step
+        while x <= xh + 1e-6:
+            p0 = self._world_to_pixel(x, yl)
+            p1 = self._world_to_pixel(x, yh)
+            self._draw_line(image, (p0[0], p0[1]), (p1[0], p1[1]), color, thickness=0)
+            x += step
+        y = np.ceil(yl / step) * step
+        while y <= yh + 1e-6:
+            p0 = self._world_to_pixel(xl, y)
+            p1 = self._world_to_pixel(xh, y)
+            self._draw_line(image, (p0[0], p0[1]), (p1[0], p1[1]), color, thickness=0)
+            y += step
+
+    def render_frame(self):
+        """Render a clear top-down schematic from state only.
+
+        This avoids the tiny/blurred PyBullet camera view and keeps the video
+        readable even on fast training runs.
         """
         h, w = self.VIDEO_SIZE
+        image = np.full((h, w, 3), 244, dtype=np.uint8)
+        self._draw_grid(image)
+
+        border = np.array([160, 168, 180], dtype=np.uint8)
+        image[0:2, :, :] = border
+        image[-2:, :, :] = border
+        image[:, 0:2, :] = border
+        image[:, -2:, :] = border
+
+        if len(self._trail) >= 2:
+            trail_color = np.array([52, 120, 220], dtype=np.uint8)
+            trail = list(self._trail)
+            for p0, p1 in zip(trail[:-1], trail[1:]):
+                x0, y0 = self._world_to_pixel(float(p0[0]), float(p0[1]))
+                x1, y1 = self._world_to_pixel(float(p1[0]), float(p1[1]))
+                self._draw_line(image, (x0, y0), (x1, y1), trail_color, thickness=1)
+
         s = self._getDroneStateVector(0)
         drone_pos = s[0:3]
         goal = self.TARGET_POS
-        # Frame both the drone and the goal: look at their midpoint and back
-        # the camera off proportionally to their separation so both stay in
-        # view (and the drone never collapses to a single pixel).
-        center = 0.5 * (drone_pos + goal)
-        sep = float(np.linalg.norm(goal - drone_pos))
-        distance = float(np.clip(1.6 + 0.9 * sep, 1.6, 6.0))
-        view = p.computeViewMatrixFromYawPitchRoll(
-            distance=distance, yaw=50, pitch=-35, roll=0,
-            cameraTargetPosition=center.tolist(), upAxisIndex=2,
-            physicsClientId=self.CLIENT)
-        proj = p.computeProjectionMatrixFOV(
-            fov=60.0, aspect=float(w) / float(h), nearVal=0.1, farVal=1000.0)
-        _, _, rgba, _, _ = p.getCameraImage(
-            width=w, height=h, viewMatrix=view, projectionMatrix=proj,
-            shadow=1, lightDirection=[1, 1, 1],
-            renderer=p.ER_TINY_RENDERER, flags=p.ER_NO_SEGMENTATION_MASK,
-            physicsClientId=self.CLIENT)
-        rgb = np.reshape(rgba, (h, w, 4))[:, :, :3]
-        return rgb.astype(np.uint8)
+        if len(self._trail) == 0 or np.linalg.norm(self._trail[-1] - drone_pos) > 1e-4:
+            self._trail.append(drone_pos.copy())
+
+        gx, gy = self._world_to_pixel(float(goal[0]), float(goal[1]))
+        self._draw_disc(image, gx, gy, radius=4, color=np.array([230, 55, 55], dtype=np.uint8))
+        self._draw_disc(image, gx, gy, radius=2, color=np.array([255, 220, 220], dtype=np.uint8))
+
+        dx, dy = self._world_to_pixel(float(drone_pos[0]), float(drone_pos[1]))
+        self._draw_disc(image, dx, dy, radius=5, color=np.array([35, 200, 210], dtype=np.uint8))
+        self._draw_disc(image, dx, dy, radius=2, color=np.array([240, 250, 255], dtype=np.uint8))
+
+        yaw = float(s[9])
+        arrow_len = 14.0
+        hx = dx + int(round(arrow_len * np.cos(yaw)))
+        hy = dy - int(round(arrow_len * np.sin(yaw)))
+        self._draw_line(image, (dx, dy), (hx, hy), np.array([20, 70, 90], dtype=np.uint8), thickness=1)
+
+        z_norm = float(np.clip((drone_pos[2] - self.BOUNDS[2, 0]) / max(self.BOUNDS[2, 1] - self.BOUNDS[2, 0], 1e-6), 0.0, 1.0))
+        bar_h = int(round(20 + 40 * z_norm))
+        image[h - 8 - bar_h:h - 8, w - 8:w - 4, :] = np.array([60, 180, 90], dtype=np.uint8)
+
+        return image
 
