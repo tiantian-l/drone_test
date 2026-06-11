@@ -20,6 +20,6 @@ python dreamerv3/main.py \
   --jax.platform cuda \
   --run.envs 8 \
   --run.train_ratio 1024 \
-  --logger.outputs '[jsonl, scope, tensorboard]' \
+  --logger.outputs 'jsonl,scope,tensorboard' \
   --env.drone.log_image True \
   "$@"
