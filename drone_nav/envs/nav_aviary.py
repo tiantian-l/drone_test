@@ -9,7 +9,13 @@ controller (`ActionType.VEL`).  The observation is purely proprioceptive
         vx, vy, vz,              # linear velocity (world)   (3)
         roll, pitch, yaw,        # attitude (euler)          (3)
         wx, wy, wz,              # body angular velocity      (3, optional)
+        # for each of the K nearest static obstacles (only if num_obstacles>0):
+        ox, oy, oz, radius,      # obstacle_center - drone, radius  (4 each)
     ]
+
+Static obstacles are tall cylindrical pillars spanning the flight volume, so
+the task reduces to 2-D avoidance. They are resampled every episode (avoiding
+the start and goal) and exposed to the agent as the K nearest relative vectors.
 
 Action (4-dim, ActionType.VEL):
     a = [dx, dy, dz, speed]
@@ -52,6 +58,16 @@ class NavigationAviary(BaseRLAviary):
                  episode_len_sec: int = 12,
                  bounds=((-3.0, 3.0), (-3.0, 3.0), (0.05, 3.0)),
                  include_angular_velocity: bool = False,
+                 # ---- static obstacles -------------------------------------
+                 num_obstacles: int = 0,
+                 randomize_obstacles: bool = True,
+                 obstacle_positions=None,
+                 obstacle_radius_range=(0.15, 0.35),
+                 obstacle_sample_range=((-2.0, 2.0), (-2.0, 2.0)),
+                 obstacle_clearance: float = 0.6,
+                 obstacle_min_gap: float = 0.3,
+                 obstacle_margin: float = 0.4,
+                 drone_collision_radius: float = 0.12,
                  # ---- logging / visualization ------------------------------
                  log_video: bool = False,
                  video_size=(192, 192),
@@ -68,6 +84,25 @@ class NavigationAviary(BaseRLAviary):
         self.START_RANGE = np.array(start_sample_range, dtype=np.float32)
         self.BOUNDS = np.array(bounds, dtype=np.float32)
         self.INCLUDE_ANG_VEL = bool(include_angular_velocity)
+
+        # Static obstacle configuration ---------------------------------------
+        self.NUM_OBSTACLES = int(num_obstacles)
+        self.RANDOMIZE_OBSTACLES = bool(randomize_obstacles)
+        self._fixed_obstacles = (None if obstacle_positions is None
+                                 else np.array(obstacle_positions, dtype=np.float32))
+        self.OBSTACLE_RADIUS_RANGE = (float(obstacle_radius_range[0]),
+                                      float(obstacle_radius_range[1]))
+        self.OBSTACLE_SAMPLE_RANGE = np.array(obstacle_sample_range, dtype=np.float32)
+        self.OBSTACLE_CLEARANCE = float(obstacle_clearance)
+        self.OBSTACLE_MIN_GAP = float(obstacle_min_gap)
+        self.OBSTACLE_MARGIN = float(obstacle_margin)
+        self.DRONE_COLLISION_RADIUS = float(drone_collision_radius)
+        # Filled by `_sample_obstacles()`; (N, 3) centers and (N,) radii.
+        self.OBSTACLE_POS = np.zeros((0, 3), dtype=np.float32)
+        self.OBSTACLE_RADII = np.zeros((0,), dtype=np.float32)
+        self._obstacle_body_ids = []
+        # Placeholder value for empty obstacle slots in the observation.
+        self._obs_pad = float(np.max(self.BOUNDS[:, 1] - self.BOUNDS[:, 0]))
 
         # Visualization (third-person RGB frames for DreamerV3 log/image) -----
         self.LOG_VIDEO = bool(log_video)
@@ -87,6 +122,8 @@ class NavigationAviary(BaseRLAviary):
             "action_smooth": 0.0,   # penalty on change of action between steps
             "tilt_penalty": 0.0,    # penalty proportional to roll/pitch magnitude
             "alive": 0.0,           # constant per-step survival reward
+            "obstacle_penalty": 0.5,   # per-step penalty when within OBSTACLE_MARGIN of an obstacle surface
+            "collision_penalty": 10.0, # one-off penalty when colliding with an obstacle
         }
         if reward_cfg:
             self.RW.update(reward_cfg)
@@ -131,6 +168,62 @@ class NavigationAviary(BaseRLAviary):
                      else self._sample_in_range(self.START_RANGE))
             self.INIT_XYZS = start.reshape(1, 3)
 
+        self._sample_obstacles()
+
+    def _sample_obstacles(self):
+        """Place static cylindrical pillars, avoiding the start and goal.
+
+        Must run AFTER the goal/start are set (so we can keep clearance from
+        both) and BEFORE `super().reset()` triggers `_addObstacles()`. Pillars
+        span the full vertical flight volume, so avoidance is effectively 2-D.
+        """
+        self.OBSTACLE_POS = np.zeros((0, 3), dtype=np.float32)
+        self.OBSTACLE_RADII = np.zeros((0,), dtype=np.float32)
+        n = self.NUM_OBSTACLES
+        if n <= 0:
+            return
+
+        # Fixed layout (optionally with per-obstacle radius in a 4th column).
+        if self._fixed_obstacles is not None and not self.RANDOMIZE_OBSTACLES:
+            fo = self._fixed_obstacles.reshape(-1, self._fixed_obstacles.shape[-1])
+            pos = fo[:, :2]
+            if fo.shape[1] >= 3:
+                radii = fo[:, 2]
+            else:
+                radii = np.full(len(pos), float(np.mean(self.OBSTACLE_RADIUS_RANGE)))
+            centers = np.column_stack([pos, np.full(len(pos), self.BOUNDS[2, 1] * 0.5)])
+            self.OBSTACLE_POS = centers.astype(np.float32)
+            self.OBSTACLE_RADII = radii.astype(np.float32)
+            return
+
+        start_xy = np.asarray(self.INIT_XYZS[0, :2], dtype=np.float32)
+        goal_xy = np.asarray(self.TARGET_POS[:2], dtype=np.float32)
+        (xl, xh), (yl, yh) = self.OBSTACLE_SAMPLE_RANGE
+        z_center = float(self.BOUNDS[2, 1] * 0.5)
+
+        positions, radii = [], []
+        max_attempts = max(200, n * 200)
+        for _ in range(max_attempts):
+            if len(positions) >= n:
+                break
+            r = float(self.np_random.uniform(*self.OBSTACLE_RADIUS_RANGE))
+            c = np.array([self.np_random.uniform(xl, xh),
+                          self.np_random.uniform(yl, yh)], dtype=np.float32)
+            if np.linalg.norm(c - start_xy) < r + self.OBSTACLE_CLEARANCE:
+                continue
+            if np.linalg.norm(c - goal_xy) < r + self.OBSTACLE_CLEARANCE:
+                continue
+            if any(np.linalg.norm(c - pc) < r + pr + self.OBSTACLE_MIN_GAP
+                   for pc, pr in zip(positions, radii)):
+                continue
+            positions.append(c)
+            radii.append(r)
+
+        if positions:
+            self.OBSTACLE_POS = np.array(
+                [[c[0], c[1], z_center] for c in positions], dtype=np.float32)
+            self.OBSTACLE_RADII = np.array(radii, dtype=np.float32)
+
     ################################################################################
 
     def reset(self, seed=None, options=None):
@@ -154,8 +247,28 @@ class NavigationAviary(BaseRLAviary):
 
     def _observationSpace(self):
         dim = 12 if self.INCLUDE_ANG_VEL else 9
+        dim += 4 * self.NUM_OBSTACLES
         hi = np.inf * np.ones(dim, dtype=np.float32)
         return spaces.Box(low=-hi, high=hi, shape=(dim,), dtype=np.float32)
+
+    def _obstacle_features(self, drone_pos):
+        """K nearest obstacles as [rel_x, rel_y, rel_z, radius], padded to K."""
+        K = self.NUM_OBSTACLES
+        if K <= 0:
+            return np.zeros((0,), dtype=np.float32)
+        feats = []
+        if self.OBSTACLE_POS.shape[0] > 0:
+            rel = self.OBSTACLE_POS - drone_pos          # (N, 3)
+            order = np.argsort(np.linalg.norm(rel[:, :2], axis=1))
+            for i in order[:K]:
+                feats.append(np.array(
+                    [rel[i, 0], rel[i, 1], rel[i, 2], self.OBSTACLE_RADII[i]],
+                    dtype=np.float32))
+        # Pad empty slots with a far placeholder and zero radius.
+        while len(feats) < K:
+            feats.append(np.array([self._obs_pad, self._obs_pad, 0.0, 0.0],
+                                  dtype=np.float32))
+        return np.concatenate(feats).astype(np.float32)
 
     def _computeObs(self):
         s = self._getDroneStateVector(0)
@@ -165,6 +278,8 @@ class NavigationAviary(BaseRLAviary):
         parts = [rel_goal, vel, rpy]
         if self.INCLUDE_ANG_VEL:
             parts.append(s[13:16])             # body angular velocity
+        if self.NUM_OBSTACLES > 0:
+            parts.append(self._obstacle_features(s[0:3]))
         return np.concatenate(parts).astype(np.float32)
 
     ################################################################################
@@ -174,6 +289,19 @@ class NavigationAviary(BaseRLAviary):
     def _distance_to_goal(self):
         s = self._getDroneStateVector(0)
         return float(np.linalg.norm(self.TARGET_POS - s[0:3]))
+
+    def _obstacle_surface_distance(self, pos):
+        """Signed horizontal distance from the drone to the nearest pillar
+        surface (negative when inside a pillar). Returns +inf if none."""
+        if self.OBSTACLE_POS.shape[0] == 0:
+            return float("inf")
+        d = np.linalg.norm(self.OBSTACLE_POS[:, :2] - pos[:2], axis=1)
+        return float(np.min(d - self.OBSTACLE_RADII))
+
+    def _is_collision(self, s):
+        if self.OBSTACLE_POS.shape[0] == 0:
+            return False
+        return self._obstacle_surface_distance(s[0:3]) < self.DRONE_COLLISION_RADIUS
 
     def _computeReward(self):
         s = self._getDroneStateVector(0)
@@ -205,7 +333,16 @@ class NavigationAviary(BaseRLAviary):
         if dist < self.GOAL_TOLERANCE:
             reward += self.RW["goal_bonus"]
 
-        # 6) Crash / out-of-bounds penalty (mirrors _computeTerminated).
+        # 6) Obstacle clearance shaping + collision penalty.
+        if self.OBSTACLE_POS.shape[0] > 0:
+            surf = self._obstacle_surface_distance(s[0:3])
+            if self.RW["obstacle_penalty"] and surf < self.OBSTACLE_MARGIN:
+                closeness = (self.OBSTACLE_MARGIN - max(surf, 0.0)) / self.OBSTACLE_MARGIN
+                reward -= self.RW["obstacle_penalty"] * float(np.clip(closeness, 0.0, 1.0))
+            if self._is_collision(s):
+                reward -= self.RW["collision_penalty"]
+
+        # 7) Crash / out-of-bounds penalty (mirrors _computeTerminated).
         if self._is_crash(s):
             reward -= self.RW["crash_penalty"]
 
@@ -229,7 +366,7 @@ class NavigationAviary(BaseRLAviary):
         s = self._getDroneStateVector(0)
         if np.linalg.norm(self.TARGET_POS - s[0:3]) < self.GOAL_TOLERANCE:
             return True   # success
-        if self._is_crash(s):
+        if self._is_crash(s) or self._is_collision(s):
             return True   # failure
         return False
 
@@ -244,10 +381,15 @@ class NavigationAviary(BaseRLAviary):
         s = self._getDroneStateVector(0)
         dist = float(np.linalg.norm(self.TARGET_POS - s[0:3]))
         success = dist < self.GOAL_TOLERANCE
-        crash = self._is_crash(s)
+        collision = self._is_collision(s)
+        crash = self._is_crash(s) or collision
+        obstacle_dist = self._obstacle_surface_distance(s[0:3])
         return {
             "distance": dist,
             "is_success": bool(success),
+            "is_collision": bool(collision),
+            "obstacle_distance": (0.0 if not np.isfinite(obstacle_dist)
+                                  else float(obstacle_dist)),
             # FromGym/embodied uses is_terminal to mask bootstrapping; a
             # time-limit truncation is NOT terminal, a crash/success is.
             "is_terminal": bool(success or crash),
@@ -267,6 +409,28 @@ class NavigationAviary(BaseRLAviary):
         `_resample_task()` before `super().reset()` triggers housekeeping.
         """
         super()._addObstacles()
+        # Static cylindrical pillars (collision + visual). Sampled in
+        # `_resample_task()` before this housekeeping runs.
+        self._obstacle_body_ids = []
+        height = float(self.BOUNDS[2, 1])
+        for center, radius in zip(self.OBSTACLE_POS, self.OBSTACLE_RADII):
+            try:
+                col = p.createCollisionShape(
+                    p.GEOM_CYLINDER, radius=float(radius), height=height,
+                    physicsClientId=self.CLIENT)
+                vis = p.createVisualShape(
+                    p.GEOM_CYLINDER, radius=float(radius), length=height,
+                    rgbaColor=[0.45, 0.45, 0.5, 1.0],
+                    physicsClientId=self.CLIENT)
+                body = p.createMultiBody(
+                    baseMass=0,
+                    baseCollisionShapeIndex=col,
+                    baseVisualShapeIndex=vis,
+                    basePosition=[float(center[0]), float(center[1]), height * 0.5],
+                    physicsClientId=self.CLIENT)
+                self._obstacle_body_ids.append(body)
+            except Exception:
+                pass
         try:
             vis = p.createVisualShape(
                 p.GEOM_SPHERE, radius=0.08, rgbaColor=[1.0, 0.1, 0.1, 1.0],
@@ -348,6 +512,18 @@ class NavigationAviary(BaseRLAviary):
         image[-2:, :, :] = border
         image[:, 0:2, :] = border
         image[:, -2:, :] = border
+
+        # Static obstacles (filled gray discs scaled to pixel radius).
+        if self.OBSTACLE_POS.shape[0] > 0:
+            (xl, xh), (yl, yh), _ = self.BOUNDS
+            pad = 0.08
+            span_x = max(xh - xl, 1e-6)
+            scale = (1.0 - 2.0 * pad) * (w - 1) / span_x
+            obs_fill = np.array([110, 114, 124], dtype=np.uint8)
+            for center, radius in zip(self.OBSTACLE_POS, self.OBSTACLE_RADII):
+                ox, oy = self._world_to_pixel(float(center[0]), float(center[1]))
+                pr = max(2, int(round(float(radius) * scale)))
+                self._draw_disc(image, ox, oy, pr, obs_fill)
 
         if len(self._trail) >= 2:
             trail_color = np.array([52, 120, 220], dtype=np.uint8)

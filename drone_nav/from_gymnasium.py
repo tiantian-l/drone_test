@@ -198,7 +198,7 @@ def make_drone_nav(task, log_image=False, video_every=20, index=0, **kwargs):
     return FromGymnasium(
         env,
         obs_key="state",
-        log_keys=("distance", "is_success"),
+        log_keys=("distance", "is_success", "is_collision", "obstacle_distance"),
         log_image=log_image,
         worker_index=index,
         video_every=video_every,
