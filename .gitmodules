@@ -2,7 +2,7 @@
 
 [submodule "third_party/dreamerv3"]
 	path = third_party/dreamerv3
-	url = git@github.com:danijar/dreamerv3.git
+	url = git@github.com:tiantian-l/dreamerv3.git
 [submodule "third_party/gym-pybullet-drones"]
 	path = third_party/gym-pybullet-drones
 	url = git@github.com:learnsyslab/gym-pybullet-drones.git
