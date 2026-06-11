@@ -11,7 +11,7 @@ source "${REPO_ROOT}/.venv-gpu/bin/activate"
 # when main.py runs from inside third_party/dreamerv3.
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 
-LOGDIR="${LOGDIR:-${HOME}/logdir/drone_obstacles/{timestamp}}"
+LOGDIR="${LOGDIR:-/root/autodl-tmp/logdir/drone_obstacles/{timestamp}}"
 
 cd "${REPO_ROOT}/third_party/dreamerv3"
 python dreamerv3/main.py \
