@@ -17,7 +17,9 @@ Action (4-dim, ActionType.VEL):
       DSL-PID velocity controller normalizes it to a unit vector.
     * speed in [-1, 1] -> |speed| scales the target speed up to SPEED_LIMIT.
 """
+import pkgutil
 from collections import deque
+from sys import platform
 
 import numpy as np
 import pybullet as p
@@ -54,8 +56,10 @@ class NavigationAviary(BaseRLAviary):
                  include_angular_velocity: bool = False,
                  # ---- logging / visualization ------------------------------
                  log_video: bool = False,
-                 video_size=(192, 192),
+                 render_mode: str = "3d",
+                 video_size=(256, 256),
                  trail_length: int = 80,
+                 trail_markers: int = 30,
                  # ---- reward weights ---------------------------------------
                  reward_cfg=None,
                  ):
@@ -70,10 +74,20 @@ class NavigationAviary(BaseRLAviary):
         self.INCLUDE_ANG_VEL = bool(include_angular_velocity)
 
         # Visualization (third-person RGB frames for DreamerV3 log/image) -----
+        # render_mode == "3d" -> photorealistic PyBullet camera (GPU OpenGL on
+        # a Tesla T4 via the EGL plugin, CPU TinyRenderer otherwise);
+        # render_mode == "2d" -> the lightweight top-down numpy schematic.
         self.LOG_VIDEO = bool(log_video)
+        self.RENDER_MODE = str(render_mode)
         self.VIDEO_SIZE = (int(video_size[0]), int(video_size[1]))  # (H, W)
         self.TRAIL_LENGTH = int(trail_length)
+        self.TRAIL_MARKERS = int(trail_markers)
         self._trail = deque(maxlen=self.TRAIL_LENGTH)
+        self._trail_bodies = []      # visual-only spheres marking the path
+        self._drone_marker_id = None  # cyan highlight so the tiny drone shows
+        self._egl_plugin = None
+        self._pyb_renderer = None    # chosen in _setup_offscreen_renderer
+        self._cam_yaw = 45.0         # slowly orbits for better depth cues
 
         self._fixed_goal = None if goal_pos is None else np.array(goal_pos, dtype=np.float32)
         self._fixed_start = None if start_pos is None else np.array(start_pos, dtype=np.float32)
@@ -111,6 +125,13 @@ class NavigationAviary(BaseRLAviary):
                          obs=ObservationType.KIN,
                          act=ActionType.VEL)
 
+        # Set up the offscreen renderer used for the third-person video. On a
+        # Linux GPU box (e.g. Tesla T4) this loads PyBullet's EGL plugin so the
+        # frames are rendered on the GPU (ER_BULLET_HARDWARE_OPENGL); otherwise
+        # it transparently falls back to the CPU TinyRenderer.
+        if self.LOG_VIDEO and self.RENDER_MODE == "3d":
+            self._setup_offscreen_renderer()
+
     ################################################################################
     # Goal / start sampling
     ################################################################################
@@ -146,6 +167,11 @@ class NavigationAviary(BaseRLAviary):
         self._prev_action = None
         self._trail.clear()
         self._trail.append(state[0:3].copy())
+        # BaseAviary.reset() calls p.resetSimulation(), which wipes every body
+        # (including our trail/drone markers); drop the stale ids so they are
+        # lazily recreated on the next render.
+        self._trail_bodies = []
+        self._drone_marker_id = None
         return obs, info
 
     ################################################################################
@@ -285,6 +311,114 @@ class NavigationAviary(BaseRLAviary):
         """(H, W, 3) shape of the third-person RGB frames."""
         return (self.VIDEO_SIZE[0], self.VIDEO_SIZE[1], 3)
 
+    # ---- 3D camera (GPU/CPU PyBullet) ---------------------------------------
+
+    def _setup_offscreen_renderer(self):
+        """Pick the offscreen renderer; prefer the GPU on Linux (Tesla T4).
+
+        Loads PyBullet's EGL plugin so ``getCameraImage`` renders on the GPU
+        with ``ER_BULLET_HARDWARE_OPENGL``. If the plugin is unavailable (e.g.
+        macOS or a CPU-only box) we fall back to the CPU ``ER_TINY_RENDERER``.
+        """
+        self._pyb_renderer = p.ER_TINY_RENDERER
+        if platform != "linux":
+            return
+        try:
+            egl = pkgutil.get_loader("eglRenderer")
+            if egl is not None:
+                self._egl_plugin = p.loadPlugin(
+                    egl.get_filename(), "_eglRendererPlugin",
+                    physicsClientId=self.CLIENT)
+                if self._egl_plugin is not None and self._egl_plugin >= 0:
+                    self._pyb_renderer = p.ER_BULLET_HARDWARE_OPENGL
+        except Exception:
+            self._pyb_renderer = p.ER_TINY_RENDERER
+
+    def _update_trail_markers(self):
+        """Place small visual-only spheres along the recent flight path."""
+        try:
+            n = self.TRAIL_MARKERS
+            if n <= 0:
+                return
+            if not self._trail_bodies:
+                for _ in range(n):
+                    vis = p.createVisualShape(
+                        p.GEOM_SPHERE, radius=0.022,
+                        rgbaColor=[0.20, 0.55, 1.0, 0.9],
+                        physicsClientId=self.CLIENT)
+                    bid = p.createMultiBody(
+                        baseMass=0, baseCollisionShapeIndex=-1,
+                        baseVisualShapeIndex=vis,
+                        basePosition=[0.0, 0.0, -10.0],
+                        physicsClientId=self.CLIENT)
+                    self._trail_bodies.append(bid)
+            # Evenly subsample the trail down to the marker pool size.
+            pts = list(self._trail)
+            if len(pts) > n:
+                idx = np.linspace(0, len(pts) - 1, n).round().astype(int)
+                pts = [pts[i] for i in idx]
+            for i, bid in enumerate(self._trail_bodies):
+                pos = pts[i].tolist() if i < len(pts) else [0.0, 0.0, -10.0]
+                p.resetBasePositionAndOrientation(
+                    bid, pos, [0, 0, 0, 1], physicsClientId=self.CLIENT)
+        except Exception:
+            pass
+
+    def _update_drone_marker(self, drone_pos):
+        """Place a cyan highlight sphere on the drone so it is easy to spot."""
+        try:
+            if self._drone_marker_id is None:
+                vis = p.createVisualShape(
+                    p.GEOM_SPHERE, radius=0.06,
+                    rgbaColor=[0.10, 0.85, 0.95, 0.85],
+                    physicsClientId=self.CLIENT)
+                self._drone_marker_id = p.createMultiBody(
+                    baseMass=0, baseCollisionShapeIndex=-1,
+                    baseVisualShapeIndex=vis,
+                    basePosition=drone_pos.tolist(),
+                    physicsClientId=self.CLIENT)
+            else:
+                p.resetBasePositionAndOrientation(
+                    self._drone_marker_id, drone_pos.tolist(), [0, 0, 0, 1],
+                    physicsClientId=self.CLIENT)
+        except Exception:
+            pass
+
+    def _render_camera_3d(self):
+        """Render a tracking 3D perspective view of the drone and goal."""
+        h, w = self.VIDEO_SIZE
+        s = self._getDroneStateVector(0)
+        drone_pos = s[0:3]
+        goal = self.TARGET_POS
+        if len(self._trail) == 0 or np.linalg.norm(self._trail[-1] - drone_pos) > 1e-3:
+            self._trail.append(drone_pos.copy())
+        self._update_trail_markers()
+        self._update_drone_marker(drone_pos)
+
+        # Frame both the drone and the goal: look at their midpoint and back
+        # the camera off proportionally to their separation.
+        target = (0.5 * (drone_pos + goal)).tolist()
+        sep = float(np.linalg.norm(drone_pos - goal))
+        distance = float(np.clip(1.6 + 0.8 * sep, 2.0, 7.0))
+        self._cam_yaw = (self._cam_yaw + 0.35) % 360.0
+
+        view = p.computeViewMatrixFromYawPitchRoll(
+            cameraTargetPosition=target, distance=distance,
+            yaw=self._cam_yaw, pitch=-32.0, roll=0.0, upAxisIndex=2,
+            physicsClientId=self.CLIENT)
+        proj = p.computeProjectionMatrixFOV(
+            fov=60.0, aspect=float(w) / float(h), nearVal=0.05, farVal=100.0,
+            physicsClientId=self.CLIENT)
+        _, _, rgb, _, _ = p.getCameraImage(
+            width=w, height=h, viewMatrix=view, projectionMatrix=proj,
+            renderer=self._pyb_renderer,
+            flags=p.ER_NO_SEGMENTATION_MASK,
+            physicsClientId=self.CLIENT)
+        rgb = np.reshape(np.asarray(rgb, dtype=np.uint8), (h, w, 4))[:, :, :3]
+        return np.ascontiguousarray(rgb)
+
+    # ---- 2D schematic (numpy, renderer-independent) -------------------------
+
     def _world_to_pixel(self, x, y):
         (xl, xh), (yl, yh), _ = self.BOUNDS
         h, w = self.VIDEO_SIZE
@@ -334,6 +468,19 @@ class NavigationAviary(BaseRLAviary):
             y += step
 
     def render_frame(self):
+        """Return one third-person RGB frame for the DreamerV3 video log.
+
+        In ``3d`` mode this is a tracking PyBullet camera (GPU on a Tesla T4,
+        CPU otherwise); any failure degrades gracefully to the 2D schematic.
+        """
+        if self.RENDER_MODE == "3d":
+            try:
+                return self._render_camera_3d()
+            except Exception:
+                pass  # fall back to the renderer-independent schematic
+        return self._render_schematic()
+
+    def _render_schematic(self):
         """Render a clear top-down schematic from state only.
 
         This avoids the tiny/blurred PyBullet camera view and keeps the video
