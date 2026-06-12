@@ -23,9 +23,22 @@ class FromGymnasium(embodied.Env):
         self._act_dict = hasattr(self._env.action_space, "spaces")
         self._obs_key = obs_key
         self._act_key = act_key
-        # Extra scalar metrics pulled from `info` and exposed as `log/<key>`
-        # so the DreamerV3 train loop aggregates them per episode (avg/max/sum).
-        self._log_keys = tuple(log_keys)
+        # Extra scalar metrics pulled from `info` and exposed as
+        # `log/<agg>/<name>` so the DreamerV3 train loop reduces them with a
+        # single, well-defined aggregator per episode (instead of the noisy
+        # avg/max/sum triple). Each entry is normalized to a
+        # `(info_key, out_name, agg)` tuple; a bare string `k` is shorthand for
+        # `(k, k, "avg")`.
+        norm = []
+        for entry in log_keys:
+            if isinstance(entry, str):
+                norm.append((entry, entry, "avg"))
+            else:
+                info_key = entry[0]
+                out_name = entry[1] if len(entry) > 1 else entry[0]
+                agg = entry[2] if len(entry) > 2 else "avg"
+                norm.append((info_key, out_name, agg))
+        self._log_keys = tuple(norm)
         # Optional third-person RGB frames exposed as `log/image`, which the
         # train loop turns into a video for worker 0.
         self._log_image = bool(log_image)
@@ -69,8 +82,8 @@ class FromGymnasium(embodied.Env):
             "is_last": elements.Space(bool),
             "is_terminal": elements.Space(bool),
         }
-        for key in self._log_keys:
-            extra[f"log/{key}"] = elements.Space(np.float32)
+        for _info_key, out_name, agg in self._log_keys:
+            extra[f"log/{agg}/{out_name}"] = elements.Space(np.float32)
         if self._log_image:
             extra[self._image_key] = elements.Space(
                 np.uint8, self._env.video_shape)
@@ -116,10 +129,11 @@ class FromGymnasium(embodied.Env):
             is_first=is_first,
             is_last=is_last,
             is_terminal=is_terminal)
-        # Inject per-step scalar metrics from info as log/<key>.
+        # Inject per-step scalar metrics from info as log/<agg>/<name>.
         info = self._info or {}
-        for key in self._log_keys:
-            obs[f"log/{key}"] = np.float32(float(info.get(key, 0.0)))
+        for info_key, out_name, agg in self._log_keys:
+            obs[f"log/{agg}/{out_name}"] = np.float32(
+                float(info.get(info_key, 0.0)))
         # Inject the third-person video frame as log/image. Render only during
         # a recording episode (worker 0, every `video_every` episodes); emit a
         # zero placeholder otherwise so the shape is identical across all envs.
@@ -198,7 +212,14 @@ def make_drone_nav(task, log_image=False, video_every=20, index=0, **kwargs):
     return FromGymnasium(
         env,
         obs_key="state",
-        log_keys=("distance", "is_success"),
+        # (info_key, metric_name, aggregator). `success` uses MAX so the
+        # per-episode value is 1 iff the goal was ever reached -> averaging
+        # over episodes (in epstats) yields the success rate. `distance` uses
+        # AVG as a coarse "how close on average" signal.
+        log_keys=(
+            ("is_success", "success", "max"),
+            ("distance", "distance", "avg"),
+        ),
         log_image=log_image,
         worker_index=index,
         video_every=video_every,
