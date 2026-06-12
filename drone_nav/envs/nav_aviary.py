@@ -68,6 +68,12 @@ class NavigationAviary(BaseRLAviary):
                  obstacle_min_gap: float = 0.3,
                  obstacle_margin: float = 0.4,
                  drone_collision_radius: float = 0.12,
+                 # placement strategy: "corridor" (between start & goal),
+                 # "grid" (density-based whole-map fill), or "uniform" (random).
+                 obstacle_placement: str = "corridor",
+                 corridor_half_width: float = 0.8,
+                 corridor_t_range=(0.15, 0.85),
+                 obstacle_density: float = 0.0,
                  # ---- logging / visualization ------------------------------
                  log_video: bool = False,
                  video_size=(192, 192),
@@ -96,6 +102,10 @@ class NavigationAviary(BaseRLAviary):
         self.OBSTACLE_CLEARANCE = float(obstacle_clearance)
         self.OBSTACLE_MIN_GAP = float(obstacle_min_gap)
         self.OBSTACLE_MARGIN = float(obstacle_margin)
+        self.OBSTACLE_PLACEMENT = str(obstacle_placement).lower()
+        self.CORRIDOR_HALF_WIDTH = float(corridor_half_width)
+        self.CORRIDOR_T_RANGE = (float(corridor_t_range[0]), float(corridor_t_range[1]))
+        self.OBSTACLE_DENSITY = float(obstacle_density)
         self.DRONE_COLLISION_RADIUS = float(drone_collision_radius)
         # Filled by `_sample_obstacles()`; (N, 3) centers and (N,) radii.
         self.OBSTACLE_POS = np.zeros((0, 3), dtype=np.float32)
@@ -176,11 +186,19 @@ class NavigationAviary(BaseRLAviary):
         Must run AFTER the goal/start are set (so we can keep clearance from
         both) and BEFORE `super().reset()` triggers `_addObstacles()`. Pillars
         span the full vertical flight volume, so avoidance is effectively 2-D.
+
+        Placement strategy (``obstacle_placement``):
+          * ``corridor`` - obstacles sampled *between* start and goal, with
+            lateral jitter, so they reliably block the direct path.
+          * ``grid``     - jittered grid covering the whole sampling area at a
+            given density, so obstacles appear everywhere (not just one region).
+          * ``uniform``  - fully random placement within the sampling range.
         """
         self.OBSTACLE_POS = np.zeros((0, 3), dtype=np.float32)
         self.OBSTACLE_RADII = np.zeros((0,), dtype=np.float32)
         n = self.NUM_OBSTACLES
-        if n <= 0:
+        want_grid = self.OBSTACLE_PLACEMENT == "grid"
+        if n <= 0 and not (want_grid and self.OBSTACLE_DENSITY > 0):
             return
 
         # Fixed layout (optionally with per-obstacle radius in a 4th column).
@@ -198,31 +216,124 @@ class NavigationAviary(BaseRLAviary):
 
         start_xy = np.asarray(self.INIT_XYZS[0, :2], dtype=np.float32)
         goal_xy = np.asarray(self.TARGET_POS[:2], dtype=np.float32)
-        (xl, xh), (yl, yh) = self.OBSTACLE_SAMPLE_RANGE
         z_center = float(self.BOUNDS[2, 1] * 0.5)
 
-        positions, radii = [], []
-        max_attempts = max(200, n * 200)
-        for _ in range(max_attempts):
-            if len(positions) >= n:
-                break
-            r = float(self.np_random.uniform(*self.OBSTACLE_RADIUS_RANGE))
-            c = np.array([self.np_random.uniform(xl, xh),
-                          self.np_random.uniform(yl, yh)], dtype=np.float32)
-            if np.linalg.norm(c - start_xy) < r + self.OBSTACLE_CLEARANCE:
-                continue
-            if np.linalg.norm(c - goal_xy) < r + self.OBSTACLE_CLEARANCE:
-                continue
-            if any(np.linalg.norm(c - pc) < r + pr + self.OBSTACLE_MIN_GAP
-                   for pc, pr in zip(positions, radii)):
-                continue
-            positions.append(c)
-            radii.append(r)
+        if want_grid:
+            positions, radii = self._sample_grid(start_xy, goal_xy)
+        elif self.OBSTACLE_PLACEMENT == "uniform":
+            positions, radii = self._sample_uniform(start_xy, goal_xy)
+        else:  # "corridor" (default)
+            positions, radii = self._sample_corridor(start_xy, goal_xy)
 
         if positions:
             self.OBSTACLE_POS = np.array(
                 [[c[0], c[1], z_center] for c in positions], dtype=np.float32)
             self.OBSTACLE_RADII = np.array(radii, dtype=np.float32)
+
+    def _accept(self, c, r, start_xy, goal_xy, positions, radii):
+        """Reject candidates too close to start/goal or other obstacles."""
+        if np.linalg.norm(c - start_xy) < r + self.OBSTACLE_CLEARANCE:
+            return False
+        if np.linalg.norm(c - goal_xy) < r + self.OBSTACLE_CLEARANCE:
+            return False
+        if any(np.linalg.norm(c - pc) < r + pr + self.OBSTACLE_MIN_GAP
+               for pc, pr in zip(positions, radii)):
+            return False
+        return True
+
+    def _sample_uniform(self, start_xy, goal_xy):
+        (xl, xh), (yl, yh) = self.OBSTACLE_SAMPLE_RANGE
+        positions, radii = [], []
+        max_attempts = max(200, self.NUM_OBSTACLES * 200)
+        for _ in range(max_attempts):
+            if len(positions) >= self.NUM_OBSTACLES:
+                break
+            r = float(self.np_random.uniform(*self.OBSTACLE_RADIUS_RANGE))
+            c = np.array([self.np_random.uniform(xl, xh),
+                          self.np_random.uniform(yl, yh)], dtype=np.float32)
+            if self._accept(c, r, start_xy, goal_xy, positions, radii):
+                positions.append(c)
+                radii.append(r)
+        return positions, radii
+
+    def _sample_corridor(self, start_xy, goal_xy):
+        """Spread obstacles along the start->goal segment with lateral jitter."""
+        (xl, xh), (yl, yh) = self.OBSTACLE_SAMPLE_RANGE
+        d = goal_xy - start_xy
+        length = float(np.linalg.norm(d))
+        if length < 1e-3:
+            # Degenerate (start == goal): fall back to uniform placement.
+            return self._sample_uniform(start_xy, goal_xy)
+        u = d / length                      # along-path unit vector
+        perp = np.array([-u[1], u[0]], dtype=np.float32)  # lateral unit vector
+        t_lo, t_hi = self.CORRIDOR_T_RANGE
+        # Evenly spaced anchors along the path so obstacles don't clump.
+        n = self.NUM_OBSTACLES
+        anchors = (np.linspace(t_lo, t_hi, n) if n > 1
+                   else np.array([(t_lo + t_hi) * 0.5]))
+        positions, radii = [], []
+        for t0 in anchors:
+            placed = False
+            for _ in range(200):
+                r = float(self.np_random.uniform(*self.OBSTACLE_RADIUS_RANGE))
+                # Jitter along the path (within the per-anchor band) and laterally.
+                span = (t_hi - t_lo) / max(n, 1)
+                t = float(np.clip(t0 + self.np_random.uniform(-0.5, 0.5) * span,
+                                  t_lo, t_hi))
+                lat = float(self.np_random.uniform(-self.CORRIDOR_HALF_WIDTH,
+                                                   self.CORRIDOR_HALF_WIDTH))
+                c = start_xy + t * d + lat * perp
+                c = np.array([np.clip(c[0], xl, xh), np.clip(c[1], yl, yh)],
+                             dtype=np.float32)
+                if self._accept(c, r, start_xy, goal_xy, positions, radii):
+                    positions.append(c)
+                    radii.append(r)
+                    placed = True
+                    break
+            if not placed:
+                continue
+        return positions, radii
+
+    def _sample_grid(self, start_xy, goal_xy):
+        """Jittered grid covering the whole sampling area at a given density.
+
+        If ``obstacle_density`` (obstacles per m^2) is set, the grid spacing is
+        derived from it; otherwise the grid is sized to fit ``num_obstacles``.
+        """
+        (xl, xh), (yl, yh) = self.OBSTACLE_SAMPLE_RANGE
+        area = max((xh - xl) * (yh - yl), 1e-6)
+        if self.OBSTACLE_DENSITY > 0:
+            spacing = float(1.0 / np.sqrt(self.OBSTACLE_DENSITY))
+            cap = None
+        else:
+            # Choose spacing so the grid roughly yields NUM_OBSTACLES cells.
+            spacing = float(np.sqrt(area / max(self.NUM_OBSTACLES, 1)))
+            cap = self.NUM_OBSTACLES
+        nx = max(int(np.round((xh - xl) / spacing)), 1)
+        ny = max(int(np.round((yh - yl) / spacing)), 1)
+        # Center the grid within the range.
+        ox = xl + ((xh - xl) - (nx - 1) * spacing) * 0.5 if nx > 1 else (xl + xh) * 0.5
+        oy = yl + ((yh - yl) - (ny - 1) * spacing) * 0.5 if ny > 1 else (yl + yh) * 0.5
+        jitter = spacing * 0.3
+        cells = [(ox + i * spacing, oy + j * spacing)
+                 for i in range(nx) for j in range(ny)]
+        # Shuffle so an optional cap selects a spatially spread subset.
+        perm = self.np_random.permutation(len(cells))
+        cells = [cells[k] for k in perm]
+        positions, radii = [], []
+        for cx, cy in cells:
+            if cap is not None and len(positions) >= cap:
+                break
+            r = float(self.np_random.uniform(*self.OBSTACLE_RADIUS_RANGE))
+            c = np.array([cx + self.np_random.uniform(-jitter, jitter),
+                          cy + self.np_random.uniform(-jitter, jitter)],
+                         dtype=np.float32)
+            c = np.array([np.clip(c[0], xl, xh), np.clip(c[1], yl, yh)],
+                         dtype=np.float32)
+            if self._accept(c, r, start_xy, goal_xy, positions, radii):
+                positions.append(c)
+                radii.append(r)
+        return positions, radii
 
     ################################################################################
 
