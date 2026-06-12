@@ -17,6 +17,7 @@ Action (4-dim, ActionType.VEL):
       DSL-PID velocity controller normalizes it to a unit vector.
     * speed in [-1, 1] -> |speed| scales the target speed up to SPEED_LIMIT.
 """
+import os
 import pkgutil
 from collections import deque
 from sys import platform
@@ -316,23 +317,77 @@ class NavigationAviary(BaseRLAviary):
     def _setup_offscreen_renderer(self):
         """Pick the offscreen renderer; prefer the GPU on Linux (Tesla T4).
 
-        Loads PyBullet's EGL plugin so ``getCameraImage`` renders on the GPU
-        with ``ER_BULLET_HARDWARE_OPENGL``. If the plugin is unavailable (e.g.
-        macOS or a CPU-only box) we fall back to the CPU ``ER_TINY_RENDERER``.
+        Tries PyBullet's EGL plugin so ``getCameraImage`` renders on the GPU
+        with ``ER_BULLET_HARDWARE_OPENGL``. Headless cloud containers often
+        fail to create an EGL context ("failed to EGL with glad"); crucially
+        ``loadPlugin`` can still return a valid id in that case and only the
+        actual render comes back black. We therefore *verify* EGL with a small
+        test render and fall back to the CPU ``ER_TINY_RENDERER`` if it does
+        not produce a real image. The choice can be forced via the env var
+        ``DRONE_RENDERER`` (``egl`` | ``tiny`` | ``auto``, default ``auto``).
         """
         self._pyb_renderer = p.ER_TINY_RENDERER
-        if platform != "linux":
+        choice = os.environ.get("DRONE_RENDERER", "auto").strip().lower()
+        if choice == "tiny" or platform != "linux":
             return
         try:
             egl = pkgutil.get_loader("eglRenderer")
-            if egl is not None:
-                self._egl_plugin = p.loadPlugin(
-                    egl.get_filename(), "_eglRendererPlugin",
-                    physicsClientId=self.CLIENT)
-                if self._egl_plugin is not None and self._egl_plugin >= 0:
-                    self._pyb_renderer = p.ER_BULLET_HARDWARE_OPENGL
+            if egl is None:
+                return
+            self._egl_plugin = p.loadPlugin(
+                egl.get_filename(), "_eglRendererPlugin",
+                physicsClientId=self.CLIENT)
+            if self._egl_plugin is None or self._egl_plugin < 0:
+                self._egl_plugin = None
+                return
+            if choice == "egl":
+                # Trust the user; skip verification.
+                self._pyb_renderer = p.ER_BULLET_HARDWARE_OPENGL
+                return
+            # auto: verify the GPU context actually renders a non-black frame.
+            if self._egl_test_render_ok():
+                self._pyb_renderer = p.ER_BULLET_HARDWARE_OPENGL
+                print("[NavigationAviary] video renderer: GPU EGL "
+                      "(ER_BULLET_HARDWARE_OPENGL)")
+            else:
+                self._unload_egl()
+                print("[NavigationAviary] EGL context unusable; falling back "
+                      "to CPU TinyRenderer for video frames.")
         except Exception:
+            self._unload_egl()
             self._pyb_renderer = p.ER_TINY_RENDERER
+
+    def _egl_test_render_ok(self):
+        """Render a tiny probe frame; True iff EGL returns a real image."""
+        try:
+            view = p.computeViewMatrixFromYawPitchRoll(
+                cameraTargetPosition=[0, 0, 0.5], distance=2.0,
+                yaw=45.0, pitch=-30.0, roll=0.0, upAxisIndex=2,
+                physicsClientId=self.CLIENT)
+            proj = p.computeProjectionMatrixFOV(
+                fov=60.0, aspect=1.0, nearVal=0.05, farVal=100.0,
+                physicsClientId=self.CLIENT)
+            _, _, rgb, _, _ = p.getCameraImage(
+                width=32, height=32, viewMatrix=view, projectionMatrix=proj,
+                renderer=p.ER_BULLET_HARDWARE_OPENGL,
+                flags=p.ER_NO_SEGMENTATION_MASK,
+                physicsClientId=self.CLIENT)
+            arr = np.reshape(np.asarray(rgb, dtype=np.uint8), (32, 32, 4))[:, :, :3]
+            # A working render of the ground + drone has spatial variation; a
+            # failed EGL context returns a uniform (usually black) buffer.
+            return bool(arr.max() > 0 and arr.std() > 1.0)
+        except Exception:
+            return False
+
+    def _unload_egl(self):
+        try:
+            if self._egl_plugin is not None and self._egl_plugin >= 0:
+                p.unloadPlugin(self._egl_plugin, physicsClientId=self.CLIENT)
+        except Exception:
+            pass
+        self._egl_plugin = None
+        self._pyb_renderer = p.ER_TINY_RENDERER
+
 
     def _update_trail_markers(self):
         """Place small visual-only spheres along the recent flight path."""
