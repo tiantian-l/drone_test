@@ -8,11 +8,11 @@ set -euo pipefail
 PYVER=3.11
 
 echo "==> Installing Python ${PYVER} and system deps"
-sudo apt-get update
-sudo apt-get install -y software-properties-common
-sudo add-apt-repository -y ppa:deadsnakes/ppa
-sudo apt-get update
-sudo apt-get install -y python${PYVER}-dev python${PYVER}-venv ffmpeg git
+apt-get update
+apt-get install -y software-properties-common
+add-apt-repository -y ppa:deadsnakes/ppa
+apt-get update
+apt-get install -y python${PYVER}-dev python${PYVER}-venv ffmpeg git
 
 echo "==> Creating virtualenv"
 python${PYVER} -m venv .venv-gpu

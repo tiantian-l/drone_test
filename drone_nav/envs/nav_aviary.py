@@ -52,7 +52,7 @@ class NavigationAviary(BaseRLAviary):
                  goal_sample_range=((-2.0, 2.0), (-2.0, 2.0), (0.5, 2.0)),
                  start_sample_range=((-0.2, 0.2), (-0.2, 0.2), (0.9, 1.1)),
                  goal_tolerance: float = 0.10,
-                 episode_len_sec: int = 12,
+                 episode_len_sec: int = 20, # change to 20，for speed limit is 0.25m/s
                  bounds=((-3.0, 3.0), (-3.0, 3.0), (0.05, 3.0)),
                  include_angular_velocity: bool = False,
                  # ---- logging / visualization ------------------------------
