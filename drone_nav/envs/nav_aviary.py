@@ -110,6 +110,8 @@ class NavigationAviary(BaseRLAviary):
         self.TARGET_POS = np.array([0.0, 0.0, 1.0], dtype=np.float32)
         self._prev_dist = None
         self._prev_action = None
+        self._start_pos = None        # drone spawn position for the episode
+        self._reward_terms = {}       # per-step reward breakdown (for logging)
 
         if initial_xyzs is None:
             initial_xyzs = np.array([[0.0, 0.0, 1.0]], dtype=np.float32)
@@ -165,7 +167,9 @@ class NavigationAviary(BaseRLAviary):
         obs, info = super().reset(seed=seed, options=options)
         state = self._getDroneStateVector(0)
         self._prev_dist = float(np.linalg.norm(self.TARGET_POS - state[0:3]))
+        self._start_pos = state[0:3].copy()
         self._prev_action = None
+        self._reward_terms = {}
         self._trail.clear()
         self._trail.append(state[0:3].copy())
         # BaseAviary.reset() calls p.resetSimulation(), which wipes every body
@@ -206,37 +210,51 @@ class NavigationAviary(BaseRLAviary):
         s = self._getDroneStateVector(0)
         dist = float(np.linalg.norm(self.TARGET_POS - s[0:3]))
 
+        # Per-step reward breakdown: each entry is the signed contribution of
+        # that term to this step's reward. Cached so `_computeInfo` can log it.
+        terms = {
+            "progress": 0.0,
+            "alive": 0.0,
+            "time_penalty": 0.0,
+            "tilt_penalty": 0.0,
+            "action_smooth": 0.0,
+            "goal_bonus": 0.0,
+            "crash_penalty": 0.0,
+        }
+
         # 1) Potential-based progress shaping: positive when getting closer.
         if self._prev_dist is None:
             self._prev_dist = dist
         progress = self._prev_dist - dist
-        reward = self.RW["progress"] * progress
+        terms["progress"] = self.RW["progress"] * progress
         self._prev_dist = dist
 
         # 2) Constant terms.
-        reward += self.RW["alive"]
-        reward -= self.RW["time_penalty"]
+        terms["alive"] = self.RW["alive"]
+        terms["time_penalty"] = -self.RW["time_penalty"]
 
         # 3) Tilt penalty (discourage aggressive attitudes).
         if self.RW["tilt_penalty"]:
             roll, pitch = s[7], s[8]
-            reward -= self.RW["tilt_penalty"] * (abs(roll) + abs(pitch))
+            terms["tilt_penalty"] = -self.RW["tilt_penalty"] * (abs(roll) + abs(pitch))
 
         # 4) Action smoothness penalty.
         if self.RW["action_smooth"] and len(self.action_buffer) >= 2:
             a_now = np.asarray(self.action_buffer[-1][0])
             a_prev = np.asarray(self.action_buffer[-2][0])
-            reward -= self.RW["action_smooth"] * float(np.linalg.norm(a_now - a_prev))
+            terms["action_smooth"] = -self.RW["action_smooth"] * float(
+                np.linalg.norm(a_now - a_prev))
 
         # 5) Goal bonus.
         if dist < self.GOAL_TOLERANCE:
-            reward += self.RW["goal_bonus"]
+            terms["goal_bonus"] = self.RW["goal_bonus"]
 
         # 6) Crash / out-of-bounds penalty (mirrors _computeTerminated).
         if self._is_crash(s):
-            reward -= self.RW["crash_penalty"]
+            terms["crash_penalty"] = -self.RW["crash_penalty"]
 
-        return float(reward)
+        self._reward_terms = terms
+        return float(sum(terms.values()))
 
     ################################################################################
     # Termination / truncation
@@ -260,8 +278,11 @@ class NavigationAviary(BaseRLAviary):
             return True   # failure
         return False
 
+    def _is_timeout(self):
+        return self.step_counter / self.PYB_FREQ > self.EPISODE_LEN_SEC
+
     def _computeTruncated(self):
-        if self.step_counter / self.PYB_FREQ > self.EPISODE_LEN_SEC:
+        if self._is_timeout():
             return True
         return False
 
@@ -269,17 +290,46 @@ class NavigationAviary(BaseRLAviary):
 
     def _computeInfo(self):
         s = self._getDroneStateVector(0)
-        dist = float(np.linalg.norm(self.TARGET_POS - s[0:3]))
+        pos = s[0:3]
+        vel = s[10:13]
+        dist = float(np.linalg.norm(self.TARGET_POS - pos))
+        dist_from_start = (float(np.linalg.norm(pos - self._start_pos))
+                           if self._start_pos is not None else 0.0)
+        speed = float(np.linalg.norm(vel))
         success = dist < self.GOAL_TOLERANCE
         crash = self._is_crash(s)
-        return {
-            "distance": dist,
+        # Timeout is only a "result" when the episode ends by the time limit
+        # without first succeeding or crashing.
+        timeout = bool(self._is_timeout() and not (success or crash))
+
+        # Action stability: magnitude of the change in the commanded action
+        # between consecutive steps (0 = perfectly smooth control).
+        action_change = 0.0
+        if len(self.action_buffer) >= 2:
+            a_now = np.asarray(self.action_buffer[-1][0])
+            a_prev = np.asarray(self.action_buffer[-2][0])
+            action_change = float(np.linalg.norm(a_now - a_prev))
+
+        info = {
+            # ---- task outcome -------------------------------------------
             "is_success": bool(success),
+            "is_crash": bool(crash),
+            "is_timeout": timeout,
             # FromGym/embodied uses is_terminal to mask bootstrapping; a
             # time-limit truncation is NOT terminal, a crash/success is.
             "is_terminal": bool(success or crash),
+            # ---- geometry / kinematics ----------------------------------
+            "distance": dist,                  # distance to goal
+            "distance_from_start": dist_from_start,
+            "speed": speed,
+            # ---- action stability ---------------------------------------
+            "action_change": action_change,
             "goal": self.TARGET_POS.copy(),
         }
+        # ---- reward breakdown (per-step signed contribution per term) ----
+        for name, value in (self._reward_terms or {}).items():
+            info[f"r_{name}"] = float(value)
+        return info
 
     ################################################################################
     # Visualization

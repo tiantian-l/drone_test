@@ -212,13 +212,32 @@ def make_drone_nav(task, log_image=False, video_every=20, index=0, **kwargs):
     return FromGymnasium(
         env,
         obs_key="state",
-        # (info_key, metric_name, aggregator). `success` uses MAX so the
-        # per-episode value is 1 iff the goal was ever reached -> averaging
-        # over episodes (in epstats) yields the success rate. `distance` uses
-        # AVG as a coarse "how close on average" signal.
+        # (info_key, metric_name, aggregator) -> exposed as `log/<metric_name>`.
+        # Outcome flags use MAX so the per-episode value is 1 iff the event ever
+        # happened; averaging over episodes (in epstats) then yields the rate
+        # (success rate, crash rate, timeout rate). Distances use LAST so we log
+        # the *final* distance to goal / displacement from start. Speed and
+        # action-change use AVG (episode means). Reward terms use SUM to log the
+        # total per-component contribution accumulated over the episode.
         log_keys=(
+            # ---- task result ------------------------------------------------
             ("is_success", "success", "max"),
-            ("distance", "distance", "avg"),
+            ("is_crash", "crash", "max"),
+            ("is_timeout", "timeout", "max"),
+            # ---- geometry / kinematics --------------------------------------
+            ("distance", "distance", "last"),
+            ("distance_from_start", "distance_from_start", "last"),
+            ("speed", "speed", "avg"),
+            # ---- action stability -------------------------------------------
+            ("action_change", "action_change", "avg"),
+            # ---- reward breakdown (episode-summed contribution per term) -----
+            ("r_progress", "reward_progress", "sum"),
+            ("r_goal_bonus", "reward_goal", "sum"),
+            ("r_time_penalty", "reward_time", "sum"),
+            ("r_tilt_penalty", "reward_tilt", "sum"),
+            ("r_action_smooth", "reward_smooth", "sum"),
+            ("r_crash_penalty", "reward_crash", "sum"),
+            ("r_alive", "reward_alive", "sum"),
         ),
         log_image=log_image,
         worker_index=index,
