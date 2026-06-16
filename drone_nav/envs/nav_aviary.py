@@ -95,14 +95,17 @@ class NavigationAviary(BaseRLAviary):
 
         # Reward weights (override individually via reward_cfg dict) -----------
         self.RW = {
-            "progress": 1.0,     # reward per meter of distance reduction toward goal
+            #"progress": 1.0,     # reward per meter of distance reduction toward goal
+            "progress": 5.0,
             "goal_bonus": 10.0,  # one-off reward when goal is reached
-            "time_penalty": 0.0,    # constant per-step penalty (encourages speed)
+           # "time_penalty": 0.0,    # constant per-step penalty (encourages speed)
+            "time_penalty": 0.01, 
             "crash_penalty": 10.0,  # penalty on termination by crash / out-of-bounds
             "action_smooth": 0.0,   # penalty on change of action between steps
             "tilt_penalty": 0.0,    # penalty proportional to roll/pitch magnitude
             "alive": 0.0,           # constant per-step survival reward
         }
+   
         if reward_cfg:
             self.RW.update(reward_cfg)
 
@@ -110,7 +113,7 @@ class NavigationAviary(BaseRLAviary):
         self.TARGET_POS = np.array([0.0, 0.0, 1.0], dtype=np.float32)
         self._prev_dist = None
         self._prev_action = None
-        self._start_pos = None        # drone spawn position for the episode
+        self._min_dist = None         # closest the drone got to the goal so far
         self._reward_terms = {}       # per-step reward breakdown (for logging)
 
         if initial_xyzs is None:
@@ -166,8 +169,9 @@ class NavigationAviary(BaseRLAviary):
         self._resample_task()
         obs, info = super().reset(seed=seed, options=options)
         state = self._getDroneStateVector(0)
-        self._prev_dist = float(np.linalg.norm(self.TARGET_POS - state[0:3]))
-        self._start_pos = state[0:3].copy()
+        d0 = float(np.linalg.norm(self.TARGET_POS - state[0:3]))
+        self._prev_dist = d0
+        self._min_dist = d0
         self._prev_action = None
         self._reward_terms = {}
         self._trail.clear()
@@ -290,46 +294,27 @@ class NavigationAviary(BaseRLAviary):
 
     def _computeInfo(self):
         s = self._getDroneStateVector(0)
-        pos = s[0:3]
-        vel = s[10:13]
-        dist = float(np.linalg.norm(self.TARGET_POS - pos))
-        dist_from_start = (float(np.linalg.norm(pos - self._start_pos))
-                           if self._start_pos is not None else 0.0)
-        speed = float(np.linalg.norm(vel))
+        dist = float(np.linalg.norm(self.TARGET_POS - s[0:3]))
+        # Track the closest approach over the whole episode.
+        if self._min_dist is None or dist < self._min_dist:
+            self._min_dist = dist
         success = dist < self.GOAL_TOLERANCE
         crash = self._is_crash(s)
         # Timeout is only a "result" when the episode ends by the time limit
         # without first succeeding or crashing.
         timeout = bool(self._is_timeout() and not (success or crash))
-
-        # Action stability: magnitude of the change in the commanded action
-        # between consecutive steps (0 = perfectly smooth control).
-        action_change = 0.0
-        if len(self.action_buffer) >= 2:
-            a_now = np.asarray(self.action_buffer[-1][0])
-            a_prev = np.asarray(self.action_buffer[-2][0])
-            action_change = float(np.linalg.norm(a_now - a_prev))
-
-        info = {
-            # ---- task outcome -------------------------------------------
-            "is_success": bool(success),
-            "is_crash": bool(crash),
-            "is_timeout": timeout,
+        return {
+            # ---- task result (5 core nav metrics) -----------------------
+            "is_success": bool(success),     # -> log/last/success
+            "is_crash": bool(crash),         # -> log/last/crash
+            "is_timeout": timeout,           # -> log/last/timeout
+            "final_distance": dist,          # -> log/last/final_distance
+            "min_distance": float(self._min_dist),  # -> log/min/min_distance
             # FromGym/embodied uses is_terminal to mask bootstrapping; a
             # time-limit truncation is NOT terminal, a crash/success is.
             "is_terminal": bool(success or crash),
-            # ---- geometry / kinematics ----------------------------------
-            "distance": dist,                  # distance to goal
-            "distance_from_start": dist_from_start,
-            "speed": speed,
-            # ---- action stability ---------------------------------------
-            "action_change": action_change,
             "goal": self.TARGET_POS.copy(),
         }
-        # ---- reward breakdown (per-step signed contribution per term) ----
-        for name, value in (self._reward_terms or {}).items():
-            info[f"r_{name}"] = float(value)
-        return info
 
     ################################################################################
     # Visualization

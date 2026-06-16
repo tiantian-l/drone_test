@@ -212,32 +212,21 @@ def make_drone_nav(task, log_image=False, video_every=20, index=0, **kwargs):
     return FromGymnasium(
         env,
         obs_key="state",
-        # (info_key, metric_name, aggregator) -> exposed as `log/<metric_name>`.
-        # Outcome flags use MAX so the per-episode value is 1 iff the event ever
-        # happened; averaging over episodes (in epstats) then yields the rate
-        # (success rate, crash rate, timeout rate). Distances use LAST so we log
-        # the *final* distance to goal / displacement from start. Speed and
-        # action-change use AVG (episode means). Reward terms use SUM to log the
-        # total per-component contribution accumulated over the episode.
+        # (info_key, metric_name, aggregator) -> exposed as `log/<metric_name>`,
+        # which train_eval.py reduces per episode and TensorBoard shows under
+        # `epstats/log/<name>` (and `eval_epstats/log/<name>` for eval). Exactly
+        # 5 core metrics so a low success rate is explainable:
+        #   success/crash/timeout -> the three mutually exclusive outcomes;
+        #   final_distance        -> how far from goal at episode end;
+        #   min_distance          -> closest the drone ever got to the goal.
+        # Outcome flags and final_distance use LAST (value at the terminal
+        # step); min_distance uses MIN over the whole episode.
         log_keys=(
-            # ---- task result ------------------------------------------------
-            ("is_success", "success", "max"),
-            ("is_crash", "crash", "max"),
-            ("is_timeout", "timeout", "max"),
-            # ---- geometry / kinematics --------------------------------------
-            ("distance", "distance", "last"),
-            ("distance_from_start", "distance_from_start", "last"),
-            ("speed", "speed", "avg"),
-            # ---- action stability -------------------------------------------
-            ("action_change", "action_change", "avg"),
-            # ---- reward breakdown (episode-summed contribution per term) -----
-            ("r_progress", "reward_progress", "sum"),
-            ("r_goal_bonus", "reward_goal", "sum"),
-            ("r_time_penalty", "reward_time", "sum"),
-            ("r_tilt_penalty", "reward_tilt", "sum"),
-            ("r_action_smooth", "reward_smooth", "sum"),
-            ("r_crash_penalty", "reward_crash", "sum"),
-            ("r_alive", "reward_alive", "sum"),
+            ("is_success", "success", "last"),
+            ("is_crash", "crash", "last"),
+            ("is_timeout", "timeout", "last"),
+            ("final_distance", "final_distance", "last"),
+            ("min_distance", "min_distance", "min"),
         ),
         log_image=log_image,
         worker_index=index,
