@@ -80,6 +80,8 @@ ${PIP} install "optax==0.2.4" "jax[cuda12]==0.4.33"
 # 4) Sanity check (use the env's own interpreter, not whatever `python` is)
 # ---------------------------------------------------------------------------
 echo "==> Sanity check"
+# embodied/elements/drone_nav are not pip-installed; they resolve via path.
+export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/third_party/dreamerv3:${PYTHONPATH:-}"
 "${PY}" - <<'PY'
 import jax, optax, gym_pybullet_drones, gymnasium, embodied, elements
 print("jax:", jax.__version__, "optax:", optax.__version__)

@@ -17,9 +17,10 @@ conda activate "${ENV_NAME}"
 PY="${CONDA_ROOT}/envs/${ENV_NAME}/bin/python"
 export PYTHONNOUSERSITE=1
 
-# drone_nav lives at the repo root; expose it so `import drone_nav` resolves
-# when main.py runs from inside third_party/dreamerv3.
-export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
+# drone_nav lives at the repo root; expose it (and embodied/elements under
+# third_party/dreamerv3) so imports resolve when main.py runs from inside
+# third_party/dreamerv3.
+export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/third_party/dreamerv3:${PYTHONPATH:-}"
 
 # Default logs to the user home (no shared/system paths). Override with LOGDIR.
 LOGDIR="${LOGDIR:-$HOME/logdir/drone_nav/{timestamp}}"
