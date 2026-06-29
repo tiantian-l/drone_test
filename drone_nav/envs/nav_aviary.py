@@ -86,8 +86,11 @@ class NavigationAviary(BaseRLAviary):
                  lidar_body_frame: bool = False,
                  # ---- logging / visualization ------------------------------
                  log_video: bool = False,
-                 video_size=(192, 192),
+                 video_size=(256, 256),
                  trail_length: int = 80,
+                 # "camera" -> isometric 3-D view (shows altitude); the task is
+                 # 3-D so this is the default. "schematic" -> flat top-down.
+                 render_mode: str = "camera",
                  # ---- reward weights ---------------------------------------
                  reward_cfg=None,
                  ):
@@ -139,6 +142,9 @@ class NavigationAviary(BaseRLAviary):
         # Visualization (third-person RGB frames for DreamerV3 log/image) -----
         self.LOG_VIDEO = bool(log_video)
         self.VIDEO_SIZE = (int(video_size[0]), int(video_size[1]))  # (H, W)
+        self.RENDER_MODE = str(render_mode).lower()
+        # Lazily-built isometric camera cache (scale/offsets), see `_iso_setup`.
+        self._iso_ready = False
         self.TRAIL_LENGTH = int(trail_length)
         self._trail = deque(maxlen=self.TRAIL_LENGTH)
 
@@ -720,11 +726,223 @@ class NavigationAviary(BaseRLAviary):
             y += step
 
     def render_frame(self):
-        """Render a clear top-down schematic from state only.
+        """Render one third-person RGB frame for the ``log/image`` video.
 
-        This avoids the tiny/blurred PyBullet camera view and keeps the video
-        readable even on fast training runs.
+        Dispatches on ``render_mode``: ``"camera"`` draws an isometric 3-D view
+        (the task is 3-D, so altitude is visible), ``"schematic"`` keeps the
+        flat top-down diagram.
         """
+        if self.RENDER_MODE == "schematic":
+            return self._render_schematic()
+        return self._render_camera()
+
+    # ------------------------------------------------------------------ 3-D ---
+    def _iso_setup(self):
+        """Precompute the isometric camera scale/offset so the whole flight
+        volume fits the frame. Runs once (depends only on BOUNDS / VIDEO_SIZE)."""
+        az = np.deg2rad(40.0)     # azimuth: view from the south-east
+        el = np.deg2rad(28.0)     # elevation above the horizon
+        d = np.array([np.cos(el) * np.cos(az),
+                      np.cos(el) * np.sin(az), -np.sin(el)], dtype=np.float32)
+        right = np.array([-np.sin(az), np.cos(az), 0.0], dtype=np.float32)
+        up_cam = np.cross(d, right)
+        self._iso_d, self._iso_right, self._iso_up = d, right, up_cam
+
+        (xl, xh), (yl, yh), (zl, zh) = self.BOUNDS
+        corners = np.array([[x, y, z] for x in (xl, xh) for y in (yl, yh)
+                            for z in (0.0, zh)], dtype=np.float32)
+        u = corners @ right
+        v = corners @ up_cam
+        h, w = self.VIDEO_SIZE
+        pad = 0.10
+        umin, umax, vmin, vmax = u.min(), u.max(), v.min(), v.max()
+        scale = (1.0 - 2.0 * pad) * min((w - 1) / max(umax - umin, 1e-6),
+                                        (h - 1) / max(vmax - vmin, 1e-6))
+        self._iso_scale = float(scale)
+        self._iso_offx = float((w - 1) * 0.5 - scale * (umin + umax) * 0.5)
+        self._iso_offy = float((h - 1) * 0.5 + scale * (vmin + vmax) * 0.5)
+        self._iso_ready = True
+
+    def _iso_project(self, pts):
+        """World (..,3) -> (px, py, depth). depth grows into the screen."""
+        pts = np.asarray(pts, dtype=np.float32).reshape(-1, 3)
+        u = pts @ self._iso_right
+        v = pts @ self._iso_up
+        depth = pts @ self._iso_d
+        px = self._iso_offx + self._iso_scale * u
+        py = self._iso_offy - self._iso_scale * v
+        return px, py, depth
+
+    def _draw_ellipse(self, image, cx, cy, rx, ry, color):
+        h, w, _ = image.shape
+        rx = max(int(rx), 1)
+        ry = max(int(ry), 1)
+        x0, x1 = max(0, cx - rx), min(w - 1, cx + rx)
+        y0, y1 = max(0, cy - ry), min(h - 1, cy + ry)
+        if x1 < x0 or y1 < y0:
+            return
+        yy, xx = np.ogrid[y0:y1 + 1, x0:x1 + 1]
+        mask = ((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2 <= 1.0
+        image[y0:y1 + 1, x0:x1 + 1][mask] = color
+
+    def _fill_rect(self, image, x0, x1, y0, y1, color):
+        h, w, _ = image.shape
+        x0, x1 = max(0, min(x0, x1)), min(w - 1, max(x0, x1))
+        y0, y1 = max(0, min(y0, y1)), min(h - 1, max(y0, y1))
+        if x1 < x0 or y1 < y0:
+            return
+        image[y0:y1 + 1, x0:x1 + 1] = color
+
+    def _render_camera(self):
+        """Isometric 3-D view: tall pillars, a drone with a drop-shadow that
+        reveals its altitude, the goal, the flown trail and the lidar fan."""
+        if not self._iso_ready:
+            self._iso_setup()
+        h, w = self.VIDEO_SIZE
+        image = np.full((h, w, 3), 245, dtype=np.uint8)
+
+        (xl, xh), (yl, yh), (zl, zh) = self.BOUNDS
+        H = float(zh)
+        s = self._getDroneStateVector(0)
+        drone_pos = s[0:3].astype(np.float32)
+        goal = self.TARGET_POS.astype(np.float32)
+        if len(self._trail) == 0 or np.linalg.norm(self._trail[-1] - drone_pos) > 1e-4:
+            self._trail.append(drone_pos.copy())
+
+        # --- ground plane (filled quad) + grid lines -----------------------
+        floor = np.array([[xl, yl, 0], [xh, yl, 0], [xh, yh, 0], [xl, yh, 0]],
+                         dtype=np.float32)
+        fpx, fpy, _ = self._iso_project(floor)
+        self._fill_poly(image, fpx, fpy, np.array([224, 228, 236], dtype=np.uint8))
+        grid_color = np.array([198, 203, 214], dtype=np.uint8)
+        step = 1.0
+        gx = np.ceil(xl / step) * step
+        while gx <= xh + 1e-6:
+            px, py, _ = self._iso_project([[gx, yl, 0], [gx, yh, 0]])
+            self._draw_line(image, (int(px[0]), int(py[0])), (int(px[1]), int(py[1])), grid_color, 0)
+            gx += step
+        gy = np.ceil(yl / step) * step
+        while gy <= yh + 1e-6:
+            px, py, _ = self._iso_project([[xl, gy, 0], [xh, gy, 0]])
+            self._draw_line(image, (int(px[0]), int(py[0])), (int(px[1]), int(py[1])), grid_color, 0)
+            gy += step
+
+        # --- collect depth-sorted drawables (painter's algorithm) ----------
+        drawables = []  # (depth, kind, payload)
+        for c, r in zip(self.OBSTACLE_POS, self.OBSTACLE_RADII):
+            _, _, dep = self._iso_project([[c[0], c[1], 0.0]])
+            drawables.append((float(dep[0]), "pillar", (c, float(r))))
+        _, _, gdep = self._iso_project([[goal[0], goal[1], goal[2]]])
+        drawables.append((float(gdep[0]), "goal", goal))
+        _, _, ddep = self._iso_project([[drone_pos[0], drone_pos[1], drone_pos[2]]])
+        drawables.append((float(ddep[0]), "drone", (drone_pos, s)))
+        # Far (large depth) first so nearer objects paint over them.
+        drawables.sort(key=lambda t: -t[0])
+
+        # --- trail on the ground-projected path (drawn before objects) -----
+        if len(self._trail) >= 2:
+            trail = np.array(self._trail, dtype=np.float32)
+            tpx, tpy, _ = self._iso_project(trail)
+            tcol = np.array([52, 120, 220], dtype=np.uint8)
+            for i in range(len(trail) - 1):
+                self._draw_line(image, (int(tpx[i]), int(tpy[i])),
+                                (int(tpx[i + 1]), int(tpy[i + 1])), tcol, 1)
+
+        for _, kind, payload in drawables:
+            if kind == "pillar":
+                self._draw_pillar(image, payload[0], payload[1], H)
+            elif kind == "goal":
+                self._draw_marker3d(image, payload, radius=6,
+                                    color=np.array([230, 55, 55], dtype=np.uint8),
+                                    core=np.array([255, 220, 220], dtype=np.uint8))
+            else:
+                self._draw_drone3d(image, payload[0], payload[1])
+
+        return image
+
+    def _fill_poly(self, image, px, py, color):
+        """Fill a convex polygon given pixel-space vertex arrays."""
+        h, w, _ = image.shape
+        ys = py.astype(int)
+        y0, y1 = max(0, ys.min()), min(h - 1, ys.max())
+        n = len(px)
+        for y in range(y0, y1 + 1):
+            xs = []
+            for i in range(n):
+                j = (i + 1) % n
+                ya, yb = py[i], py[j]
+                if (ya <= y < yb) or (yb <= y < ya):
+                    t = (y - ya) / (yb - ya)
+                    xs.append(px[i] + t * (px[j] - px[i]))
+            if len(xs) >= 2:
+                xa, xb = int(min(xs)), int(max(xs))
+                self._fill_rect(image, xa, xb, y, y, color)
+
+    def _draw_pillar(self, image, center, radius, height):
+        """Draw a cylindrical pillar as a shaded vertical body + top cap."""
+        base = [float(center[0]), float(center[1]), 0.0]
+        top = [float(center[0]), float(center[1]), float(height)]
+        bpx, bpy, _ = self._iso_project([base])
+        tpx, tpy, _ = self._iso_project([top])
+        cx = int(round(float(bpx[0])))
+        by = int(round(float(bpy[0])))
+        ty = int(round(float(tpy[0])))
+        hw = max(2, int(round(radius * self._iso_scale)))
+        rye = max(1, int(round(hw * np.sin(np.deg2rad(28.0)))))
+        # Body (slightly shaded), then a brighter top cap and a darker base rim.
+        self._fill_rect(image, cx - hw, cx + hw, ty, by,
+                        np.array([120, 126, 140], dtype=np.uint8))
+        self._fill_rect(image, cx - hw, cx - hw + max(1, hw // 3), ty, by,
+                        np.array([150, 156, 168], dtype=np.uint8))
+        self._draw_ellipse(image, cx, by, hw, rye, np.array([92, 97, 110], dtype=np.uint8))
+        self._draw_ellipse(image, cx, ty, hw, rye, np.array([158, 164, 176], dtype=np.uint8))
+
+    def _draw_marker3d(self, image, pos, radius, color, core):
+        """A floating marker with a drop line + ground shadow showing altitude."""
+        gpx, gpy, _ = self._iso_project([[pos[0], pos[1], 0.0]])
+        apx, apy, _ = self._iso_project([[pos[0], pos[1], pos[2]]])
+        gx, gy = int(gpx[0]), int(gpy[0])
+        ax, ay = int(apx[0]), int(apy[0])
+        self._draw_ellipse(image, gx, gy, max(2, radius - 2),
+                           max(1, (radius - 2) // 2), np.array([150, 150, 160], dtype=np.uint8))
+        self._draw_line(image, (gx, gy), (ax, ay), np.array([150, 150, 160], dtype=np.uint8), 0)
+        self._draw_disc(image, ax, ay, radius, color)
+        self._draw_disc(image, ax, ay, max(1, radius // 2), core)
+
+    def _draw_drone3d(self, image, drone_pos, s):
+        """Drone marker with altitude drop-line, shadow, heading and lidar fan."""
+        gpx, gpy, _ = self._iso_project([[drone_pos[0], drone_pos[1], 0.0]])
+        apx, apy, _ = self._iso_project([[drone_pos[0], drone_pos[1], drone_pos[2]]])
+        gx, gy = int(gpx[0]), int(gpy[0])
+        ax, ay = int(apx[0]), int(apy[0])
+        # Lidar fan at the drone's altitude (horizontal beams).
+        if self.OBSTACLE_OBS_MODE == "lidar":
+            angles = self._lidar_base_angles
+            if self.LIDAR_BODY_FRAME:
+                angles = angles + float(s[9])
+            beam_color = np.array([250, 190, 70], dtype=np.uint8)
+            ends = np.stack([
+                drone_pos[0] + self._lidar_last * self.LIDAR_MAX_RANGE * np.cos(angles),
+                drone_pos[1] + self._lidar_last * self.LIDAR_MAX_RANGE * np.sin(angles),
+                np.full(len(angles), drone_pos[2])], axis=1)
+            epx, epy, _ = self._iso_project(ends)
+            for i in range(len(angles)):
+                self._draw_line(image, (ax, ay), (int(epx[i]), int(epy[i])), beam_color, 0)
+        # Drop shadow + altitude line.
+        self._draw_ellipse(image, gx, gy, 4, 2, np.array([150, 150, 160], dtype=np.uint8))
+        self._draw_line(image, (gx, gy), (ax, ay), np.array([120, 120, 135], dtype=np.uint8), 0)
+        # Heading arrow (in the horizontal plane at the drone's altitude).
+        yaw = float(s[9])
+        hpx, hpy, _ = self._iso_project([[drone_pos[0] + 0.35 * np.cos(yaw),
+                                          drone_pos[1] + 0.35 * np.sin(yaw),
+                                          drone_pos[2]]])
+        self._draw_line(image, (ax, ay), (int(hpx[0]), int(hpy[0])),
+                        np.array([20, 70, 90], dtype=np.uint8), 1)
+        self._draw_disc(image, ax, ay, 6, np.array([35, 200, 210], dtype=np.uint8))
+        self._draw_disc(image, ax, ay, 3, np.array([240, 250, 255], dtype=np.uint8))
+
+    # -------------------------------------------------------------- 2-D ---
+    def _render_schematic(self):
         h, w = self.VIDEO_SIZE
         image = np.full((h, w, 3), 244, dtype=np.uint8)
         self._draw_grid(image)
