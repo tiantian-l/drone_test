@@ -69,10 +69,12 @@ class NavigationAviary(BaseRLAviary):
                  obstacle_margin: float = 0.4,
                  drone_collision_radius: float = 0.12,
                  # placement strategy: "corridor" (between start & goal),
-                 # "grid" (density-based whole-map fill), or "uniform" (random).
+                 # "grid" (density-based whole-map fill), "uniform" (random),
+                 # or "mixed" (grid background + guaranteed corridor blockers).
                  obstacle_placement: str = "corridor",
                  corridor_half_width: float = 0.8,
                  corridor_t_range=(0.15, 0.85),
+                 corridor_blockers: int = 2,
                  obstacle_density: float = 0.0,
                  # ---- obstacle perception ----------------------------------
                  # "nearest" -> K nearest obstacle relative vectors (legacy);
@@ -113,6 +115,7 @@ class NavigationAviary(BaseRLAviary):
         self.OBSTACLE_PLACEMENT = str(obstacle_placement).lower()
         self.CORRIDOR_HALF_WIDTH = float(corridor_half_width)
         self.CORRIDOR_T_RANGE = (float(corridor_t_range[0]), float(corridor_t_range[1]))
+        self.CORRIDOR_BLOCKERS = int(corridor_blockers)
         self.OBSTACLE_DENSITY = float(obstacle_density)
         self.DRONE_COLLISION_RADIUS = float(drone_collision_radius)
         # Obstacle perception ------------------------------------------------
@@ -212,12 +215,19 @@ class NavigationAviary(BaseRLAviary):
           * ``grid``     - jittered grid covering the whole sampling area at a
             given density, so obstacles appear everywhere (not just one region).
           * ``uniform``  - fully random placement within the sampling range.
+          * ``mixed``    - density grid background PLUS a few guaranteed
+            corridor blockers, so the whole map is populated yet the direct
+            start->goal path is always obstructed (no trivial straight shots).
         """
         self.OBSTACLE_POS = np.zeros((0, 3), dtype=np.float32)
         self.OBSTACLE_RADII = np.zeros((0,), dtype=np.float32)
         n = self.NUM_OBSTACLES
-        want_grid = self.OBSTACLE_PLACEMENT == "grid"
-        if n <= 0 and not (want_grid and self.OBSTACLE_DENSITY > 0):
+        placement = self.OBSTACLE_PLACEMENT
+        want_grid = placement == "grid"
+        want_mixed = placement == "mixed"
+        has_grid_fill = (want_grid or want_mixed) and self.OBSTACLE_DENSITY > 0
+        has_blockers = want_mixed and self.CORRIDOR_BLOCKERS > 0
+        if n <= 0 and not has_grid_fill and not has_blockers:
             return
 
         # Fixed layout (optionally with per-obstacle radius in a 4th column).
@@ -239,6 +249,8 @@ class NavigationAviary(BaseRLAviary):
 
         if want_grid:
             positions, radii = self._sample_grid(start_xy, goal_xy)
+        elif want_mixed:
+            positions, radii = self._sample_mixed(start_xy, goal_xy)
         elif self.OBSTACLE_PLACEMENT == "uniform":
             positions, radii = self._sample_uniform(start_xy, goal_xy)
         else:  # "corridor" (default)
@@ -275,9 +287,14 @@ class NavigationAviary(BaseRLAviary):
                 radii.append(r)
         return positions, radii
 
-    def _sample_corridor(self, start_xy, goal_xy):
-        """Spread obstacles along the start->goal segment with lateral jitter."""
+    def _sample_corridor(self, start_xy, goal_xy, n=None, positions=None, radii=None):
+        """Spread ``n`` obstacles along the start->goal segment with lateral
+        jitter. ``positions``/``radii`` may seed already-placed obstacles so
+        this can extend an existing layout (used by the ``mixed`` strategy)."""
         (xl, xh), (yl, yh) = self.OBSTACLE_SAMPLE_RANGE
+        n = self.NUM_OBSTACLES if n is None else int(n)
+        positions = [] if positions is None else positions
+        radii = [] if radii is None else radii
         d = goal_xy - start_xy
         length = float(np.linalg.norm(d))
         if length < 1e-3:
@@ -287,10 +304,8 @@ class NavigationAviary(BaseRLAviary):
         perp = np.array([-u[1], u[0]], dtype=np.float32)  # lateral unit vector
         t_lo, t_hi = self.CORRIDOR_T_RANGE
         # Evenly spaced anchors along the path so obstacles don't clump.
-        n = self.NUM_OBSTACLES
         anchors = (np.linspace(t_lo, t_hi, n) if n > 1
                    else np.array([(t_lo + t_hi) * 0.5]))
-        positions, radii = [], []
         for t0 in anchors:
             placed = False
             for _ in range(200):
@@ -313,13 +328,17 @@ class NavigationAviary(BaseRLAviary):
                 continue
         return positions, radii
 
-    def _sample_grid(self, start_xy, goal_xy):
+    def _sample_grid(self, start_xy, goal_xy, positions=None, radii=None):
         """Jittered grid covering the whole sampling area at a given density.
 
         If ``obstacle_density`` (obstacles per m^2) is set, the grid spacing is
         derived from it; otherwise the grid is sized to fit ``num_obstacles``.
+        ``positions``/``radii`` may seed already-placed obstacles so this can
+        fill *around* them (used by the ``mixed`` strategy).
         """
         (xl, xh), (yl, yh) = self.OBSTACLE_SAMPLE_RANGE
+        positions = [] if positions is None else positions
+        radii = [] if radii is None else radii
         area = max((xh - xl) * (yh - yl), 1e-6)
         if self.OBSTACLE_DENSITY > 0:
             spacing = float(1.0 / np.sqrt(self.OBSTACLE_DENSITY))
@@ -339,9 +358,10 @@ class NavigationAviary(BaseRLAviary):
         # Shuffle so an optional cap selects a spatially spread subset.
         perm = self.np_random.permutation(len(cells))
         cells = [cells[k] for k in perm]
-        positions, radii = [], []
+        # ``cap`` counts only the grid cells we add (seed blockers don't count).
+        target = None if cap is None else cap + len(positions)
         for cx, cy in cells:
-            if cap is not None and len(positions) >= cap:
+            if target is not None and len(positions) >= target:
                 break
             r = float(self.np_random.uniform(*self.OBSTACLE_RADIUS_RANGE))
             c = np.array([cx + self.np_random.uniform(-jitter, jitter),
@@ -352,6 +372,22 @@ class NavigationAviary(BaseRLAviary):
             if self._accept(c, r, start_xy, goal_xy, positions, radii):
                 positions.append(c)
                 radii.append(r)
+        return positions, radii
+
+    def _sample_mixed(self, start_xy, goal_xy):
+        """Guaranteed corridor blockers + a whole-map density grid background.
+
+        First place ``corridor_blockers`` pillars on the direct start->goal
+        line (so the path is never trivially clear), then fill the rest of the
+        arena with the density grid, keeping clearance from the blockers. This
+        removes the "obstacles ended up off the path" failure mode of pure grid
+        placement while still teaching general, whole-map avoidance.
+        """
+        positions, radii = self._sample_corridor(
+            start_xy, goal_xy, n=self.CORRIDOR_BLOCKERS)
+        if self.OBSTACLE_DENSITY > 0 or self.NUM_OBSTACLES > 0:
+            positions, radii = self._sample_grid(
+                start_xy, goal_xy, positions=positions, radii=radii)
         return positions, radii
 
     ################################################################################
