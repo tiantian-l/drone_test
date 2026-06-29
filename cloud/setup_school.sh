@@ -53,16 +53,20 @@ pip install "numpy<2"
 pip install -e "${REPO_ROOT}/third_party/gym-pybullet-drones"
 
 echo "==> Installing DreamerV3 requirements with CUDA JAX"
-grep -v '^jax' "${REPO_ROOT}/third_party/dreamerv3/requirements.txt" > /tmp/req-nojax.txt
+# Drop jax/jaxlib (we pin 0.4.33 below) AND optax: the unpinned optax resolves
+# to 0.2.8, which forces jax>=0.5.3 and silently breaks our 0.4.33 install.
+# optax 0.2.4 is the newest release still compatible with jax 0.4.33.
+grep -vE '^(jax|jaxlib|optax)' "${REPO_ROOT}/third_party/dreamerv3/requirements.txt" > /tmp/req-nojax.txt
 pip install -r /tmp/req-nojax.txt
-pip install "jax[cuda12]==0.4.33"
+pip install "optax==0.2.4" "jax[cuda12]==0.4.33"
 
 # ---------------------------------------------------------------------------
-# 4) Sanity check
+# 4) Sanity check (use the env's own interpreter, not whatever `python` is)
 # ---------------------------------------------------------------------------
 echo "==> Sanity check"
-python - <<'PY'
-import jax, gym_pybullet_drones, gymnasium, embodied, elements
+"${CONDA_ROOT}/envs/${ENV_NAME}/bin/python" - <<'PY'
+import jax, optax, gym_pybullet_drones, gymnasium, embodied, elements
+print("jax:", jax.__version__, "optax:", optax.__version__)
 print("jax devices:", jax.devices())
 import drone_nav  # noqa
 print("drone_nav import OK")
