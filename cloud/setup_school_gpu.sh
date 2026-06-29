@@ -13,7 +13,10 @@
 set -euo pipefail
 
 PYVER=3.11
-ENV_NAME="${ENV_NAME:-drone-gpu}"          # conda env name (override with ENV_NAME=)
+# Reuse the SAME conda env as the simple A->B task: the obstacle/lidar work adds
+# no new dependencies (pure NumPy + existing DreamerV3 stack). Override with
+# ENV_NAME=... if you want a separate env.
+ENV_NAME="${ENV_NAME:-drone}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${REPO_ROOT}"
 

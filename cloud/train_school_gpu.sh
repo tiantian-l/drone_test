@@ -7,7 +7,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ENV_NAME="${ENV_NAME:-drone-gpu}"
+ENV_NAME="${ENV_NAME:-drone}"
 
 # --- activate the same env that setup_school_gpu.sh created ------------------
 if command -v conda >/dev/null 2>&1 && \
