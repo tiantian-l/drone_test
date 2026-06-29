@@ -74,6 +74,14 @@ class NavigationAviary(BaseRLAviary):
                  corridor_half_width: float = 0.8,
                  corridor_t_range=(0.15, 0.85),
                  obstacle_density: float = 0.0,
+                 # ---- obstacle perception ----------------------------------
+                 # "nearest" -> K nearest obstacle relative vectors (legacy);
+                 # "lidar"   -> fixed-size 2-D range scan (count-independent);
+                 # "none"    -> no obstacle channel in the observation.
+                 obstacle_obs_mode: str = "nearest",
+                 lidar_num_beams: int = 16,
+                 lidar_max_range: float = 2.0,
+                 lidar_body_frame: bool = False,
                  # ---- logging / visualization ------------------------------
                  log_video: bool = False,
                  video_size=(192, 192),
@@ -107,6 +115,17 @@ class NavigationAviary(BaseRLAviary):
         self.CORRIDOR_T_RANGE = (float(corridor_t_range[0]), float(corridor_t_range[1]))
         self.OBSTACLE_DENSITY = float(obstacle_density)
         self.DRONE_COLLISION_RADIUS = float(drone_collision_radius)
+        # Obstacle perception ------------------------------------------------
+        self.OBSTACLE_OBS_MODE = str(obstacle_obs_mode).lower()
+        self.LIDAR_NUM_BEAMS = int(lidar_num_beams)
+        self.LIDAR_MAX_RANGE = float(lidar_max_range)
+        self.LIDAR_BODY_FRAME = bool(lidar_body_frame)
+        # Cache the fixed beam angles (world frame); rotated by yaw at runtime
+        # only when ``lidar_body_frame`` is set.
+        self._lidar_base_angles = np.linspace(
+            0.0, 2.0 * np.pi, self.LIDAR_NUM_BEAMS, endpoint=False
+        ).astype(np.float32)
+        self._lidar_last = np.ones(self.LIDAR_NUM_BEAMS, dtype=np.float32)
         # Filled by `_sample_obstacles()`; (N, 3) centers and (N,) radii.
         self.OBSTACLE_POS = np.zeros((0, 3), dtype=np.float32)
         self.OBSTACLE_RADII = np.zeros((0,), dtype=np.float32)
@@ -358,9 +377,17 @@ class NavigationAviary(BaseRLAviary):
 
     def _observationSpace(self):
         dim = 12 if self.INCLUDE_ANG_VEL else 9
-        dim += 4 * self.NUM_OBSTACLES
+        dim += self._obstacle_obs_dim()
         hi = np.inf * np.ones(dim, dtype=np.float32)
         return spaces.Box(low=-hi, high=hi, shape=(dim,), dtype=np.float32)
+
+    def _obstacle_obs_dim(self):
+        """Width of the obstacle-perception slice of the observation vector."""
+        if self.OBSTACLE_OBS_MODE == "lidar":
+            return self.LIDAR_NUM_BEAMS
+        if self.OBSTACLE_OBS_MODE == "nearest":
+            return 4 * self.NUM_OBSTACLES
+        return 0
 
     def _obstacle_features(self, drone_pos):
         """K nearest obstacles as [rel_x, rel_y, rel_z, radius], padded to K."""
@@ -381,6 +408,52 @@ class NavigationAviary(BaseRLAviary):
                                   dtype=np.float32))
         return np.concatenate(feats).astype(np.float32)
 
+    def _lidar_scan(self, drone_pos, yaw):
+        """Fixed-size 2-D range scan, analytic ray-casting against the
+        cylindrical pillars and the arena walls.
+
+        Returns ``LIDAR_NUM_BEAMS`` normalized clearances in ``[0, 1]`` where
+        ``1`` means "nothing within ``LIDAR_MAX_RANGE``" (free) and ``0`` means
+        the beam is touching a surface. Because the width is fixed, this works
+        unchanged for any obstacle count or density (unlike the nearest-K
+        encoding, whose width scales with K).
+        """
+        B = self.LIDAR_NUM_BEAMS
+        angles = self._lidar_base_angles
+        if self.LIDAR_BODY_FRAME:
+            angles = angles + float(yaw)
+        dirs = np.stack([np.cos(angles), np.sin(angles)], axis=1)  # (B, 2)
+        o = drone_pos[:2].astype(np.float32)
+        rng = np.full(B, self.LIDAR_MAX_RANGE, dtype=np.float32)
+
+        # --- ray vs. cylinders (2-D circles) -------------------------------
+        if self.OBSTACLE_POS.shape[0] > 0:
+            c = self.OBSTACLE_POS[:, :2]                 # (N, 2)
+            R = self.OBSTACLE_RADII                       # (N,)
+            f = o[None, :] - c                            # (N, 2)
+            b = dirs @ f.T                                # (B, N)
+            cc = (f * f).sum(axis=1) - R ** 2             # (N,)
+            disc = b ** 2 - cc[None, :]                   # (B, N)
+            sq = np.sqrt(np.maximum(disc, 0.0))
+            t_near = -b - sq
+            t_far = -b + sq
+            t = np.where(t_near > 1e-6, t_near, t_far)    # nearest hit ahead
+            t = np.where((disc >= 0.0) & (t > 1e-6), t, np.inf)
+            rng = np.minimum(rng, t.min(axis=1))
+
+        # --- ray vs. arena walls (axis-aligned box) ------------------------
+        (xl, xh), (yl, yh), _ = self.BOUNDS
+        with np.errstate(divide="ignore", invalid="ignore"):
+            tx = np.where(dirs[:, 0] > 0, (xh - o[0]) / dirs[:, 0],
+                          np.where(dirs[:, 0] < 0, (xl - o[0]) / dirs[:, 0], np.inf))
+            ty = np.where(dirs[:, 1] > 0, (yh - o[1]) / dirs[:, 1],
+                          np.where(dirs[:, 1] < 0, (yl - o[1]) / dirs[:, 1], np.inf))
+        rng = np.minimum(rng, np.minimum(tx, ty))
+
+        rng = np.clip(rng, 0.0, self.LIDAR_MAX_RANGE)
+        self._lidar_last = (rng / self.LIDAR_MAX_RANGE).astype(np.float32)
+        return self._lidar_last
+
     def _computeObs(self):
         s = self._getDroneStateVector(0)
         rel_goal = self.TARGET_POS - s[0:3]   # (3,)
@@ -389,7 +462,9 @@ class NavigationAviary(BaseRLAviary):
         parts = [rel_goal, vel, rpy]
         if self.INCLUDE_ANG_VEL:
             parts.append(s[13:16])             # body angular velocity
-        if self.NUM_OBSTACLES > 0:
+        if self.OBSTACLE_OBS_MODE == "lidar":
+            parts.append(self._lidar_scan(s[0:3], s[9]))
+        elif self.OBSTACLE_OBS_MODE == "nearest" and self.NUM_OBSTACLES > 0:
             parts.append(self._obstacle_features(s[0:3]))
         return np.concatenate(parts).astype(np.float32)
 
@@ -655,6 +730,18 @@ class NavigationAviary(BaseRLAviary):
         self._draw_disc(image, gx, gy, radius=2, color=np.array([255, 220, 220], dtype=np.uint8))
 
         dx, dy = self._world_to_pixel(float(drone_pos[0]), float(drone_pos[1]))
+        # Lidar beams (drawn beneath the drone marker so they read as rays).
+        if self.OBSTACLE_OBS_MODE == "lidar":
+            angles = self._lidar_base_angles
+            if self.LIDAR_BODY_FRAME:
+                angles = angles + float(s[9])
+            beam_color = np.array([250, 190, 70], dtype=np.uint8)
+            for ang, norm in zip(angles, self._lidar_last):
+                d = float(norm) * self.LIDAR_MAX_RANGE
+                ex = float(drone_pos[0]) + d * float(np.cos(float(ang)))
+                ey = float(drone_pos[1]) + d * float(np.sin(float(ang)))
+                epx, epy = self._world_to_pixel(ex, ey)
+                self._draw_line(image, (dx, dy), (epx, epy), beam_color, thickness=0)
         self._draw_disc(image, dx, dy, radius=5, color=np.array([35, 200, 210], dtype=np.uint8))
         self._draw_disc(image, dx, dy, radius=2, color=np.array([240, 250, 255], dtype=np.uint8))
 
