@@ -86,7 +86,7 @@ class NavigationAviary(BaseRLAviary):
                  lidar_body_frame: bool = False,
                  # ---- logging / visualization ------------------------------
                  log_video: bool = False,
-                 video_size=(256, 256),
+                 video_size=(384, 384),
                  trail_length: int = 80,
                  # "camera" -> isometric 3-D view (shows altitude); the task is
                  # 3-D so this is the default. "schematic" -> flat top-down.
@@ -773,7 +773,7 @@ class NavigationAviary(BaseRLAviary):
         py = self._iso_offy - self._iso_scale * v
         return px, py, depth
 
-    def _draw_ellipse(self, image, cx, cy, rx, ry, color):
+    def _draw_ellipse(self, image, cx, cy, rx, ry, color, alpha=1.0):
         h, w, _ = image.shape
         rx = max(int(rx), 1)
         ry = max(int(ry), 1)
@@ -783,15 +783,27 @@ class NavigationAviary(BaseRLAviary):
             return
         yy, xx = np.ogrid[y0:y1 + 1, x0:x1 + 1]
         mask = ((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2 <= 1.0
-        image[y0:y1 + 1, x0:x1 + 1][mask] = color
+        region = image[y0:y1 + 1, x0:x1 + 1]
+        if alpha >= 1.0:
+            region[mask] = color
+        else:
+            blended = (region[mask].astype(np.float32) * (1.0 - alpha)
+                       + color.astype(np.float32) * alpha)
+            region[mask] = blended.astype(np.uint8)
 
-    def _fill_rect(self, image, x0, x1, y0, y1, color):
+    def _fill_rect(self, image, x0, x1, y0, y1, color, alpha=1.0):
         h, w, _ = image.shape
         x0, x1 = max(0, min(x0, x1)), min(w - 1, max(x0, x1))
         y0, y1 = max(0, min(y0, y1)), min(h - 1, max(y0, y1))
         if x1 < x0 or y1 < y0:
             return
-        image[y0:y1 + 1, x0:x1 + 1] = color
+        if alpha >= 1.0:
+            image[y0:y1 + 1, x0:x1 + 1] = color
+        else:
+            region = image[y0:y1 + 1, x0:x1 + 1].astype(np.float32)
+            image[y0:y1 + 1, x0:x1 + 1] = (
+                region * (1.0 - alpha) + color.astype(np.float32) * alpha
+            ).astype(np.uint8)
 
     def _render_camera(self):
         """Isometric 3-D view: tall pillars, a drone with a drop-shadow that
@@ -827,17 +839,13 @@ class NavigationAviary(BaseRLAviary):
             self._draw_line(image, (int(px[0]), int(py[0])), (int(px[1]), int(py[1])), grid_color, 0)
             gy += step
 
-        # --- collect depth-sorted drawables (painter's algorithm) ----------
-        drawables = []  # (depth, kind, payload)
+        # --- depth-sort the pillars only (painter's algorithm) ------------
+        pillars = []  # (depth, center, radius)
         for c, r in zip(self.OBSTACLE_POS, self.OBSTACLE_RADII):
             _, _, dep = self._iso_project([[c[0], c[1], 0.0]])
-            drawables.append((float(dep[0]), "pillar", (c, float(r))))
-        _, _, gdep = self._iso_project([[goal[0], goal[1], goal[2]]])
-        drawables.append((float(gdep[0]), "goal", goal))
-        _, _, ddep = self._iso_project([[drone_pos[0], drone_pos[1], drone_pos[2]]])
-        drawables.append((float(ddep[0]), "drone", (drone_pos, s)))
-        # Far (large depth) first so nearer objects paint over them.
-        drawables.sort(key=lambda t: -t[0])
+            pillars.append((float(dep[0]), c, float(r)))
+        # Far (large depth) first so nearer pillars paint over them.
+        pillars.sort(key=lambda t: -t[0])
 
         # --- trail on the ground-projected path (drawn before objects) -----
         if len(self._trail) >= 2:
@@ -848,15 +856,16 @@ class NavigationAviary(BaseRLAviary):
                 self._draw_line(image, (int(tpx[i]), int(tpy[i])),
                                 (int(tpx[i + 1]), int(tpy[i + 1])), tcol, 1)
 
-        for _, kind, payload in drawables:
-            if kind == "pillar":
-                self._draw_pillar(image, payload[0], payload[1], H)
-            elif kind == "goal":
-                self._draw_marker3d(image, payload, radius=6,
-                                    color=np.array([230, 55, 55], dtype=np.uint8),
-                                    core=np.array([255, 220, 220], dtype=np.uint8))
-            else:
-                self._draw_drone3d(image, payload[0], payload[1])
+        # Pillars are semi-transparent so the agent stays visible through them.
+        for _, c, r in pillars:
+            self._draw_pillar(image, c, r, H)
+
+        # The goal and the drone are the task-relevant markers, so always draw
+        # them LAST (as an overlay): they are never fully hidden behind a pillar.
+        self._draw_marker3d(image, goal, radius=6,
+                            color=np.array([230, 55, 55], dtype=np.uint8),
+                            core=np.array([255, 220, 220], dtype=np.uint8))
+        self._draw_drone3d(image, drone_pos, s)
 
         return image
 
@@ -889,13 +898,17 @@ class NavigationAviary(BaseRLAviary):
         ty = int(round(float(tpy[0])))
         hw = max(2, int(round(radius * self._iso_scale)))
         rye = max(1, int(round(hw * np.sin(np.deg2rad(28.0)))))
-        # Body (slightly shaded), then a brighter top cap and a darker base rim.
+        # Semi-transparent body (so the drone behind stays visible), a brighter
+        # shaded edge, a darker base rim and a brighter top cap.
+        a = 0.72
         self._fill_rect(image, cx - hw, cx + hw, ty, by,
-                        np.array([120, 126, 140], dtype=np.uint8))
+                        np.array([120, 126, 140], dtype=np.uint8), alpha=a)
         self._fill_rect(image, cx - hw, cx - hw + max(1, hw // 3), ty, by,
-                        np.array([150, 156, 168], dtype=np.uint8))
-        self._draw_ellipse(image, cx, by, hw, rye, np.array([92, 97, 110], dtype=np.uint8))
-        self._draw_ellipse(image, cx, ty, hw, rye, np.array([158, 164, 176], dtype=np.uint8))
+                        np.array([150, 156, 168], dtype=np.uint8), alpha=a)
+        self._draw_ellipse(image, cx, by, hw, rye,
+                           np.array([92, 97, 110], dtype=np.uint8), alpha=a)
+        self._draw_ellipse(image, cx, ty, hw, rye,
+                           np.array([158, 164, 176], dtype=np.uint8), alpha=a)
 
     def _draw_marker3d(self, image, pos, radius, color, core):
         """A floating marker with a drop line + ground shadow showing altitude."""
