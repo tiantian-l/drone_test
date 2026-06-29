@@ -38,7 +38,7 @@ source "${CONDA_ROOT}/etc/profile.d/conda.sh"
 # ---------------------------------------------------------------------------
 if ! conda env list | grep -qE "^${ENV_NAME}\s"; then
   echo "==> Creating conda env '${ENV_NAME}' (python ${PYVER}, ffmpeg, git)"
-  conda create -y -n "${ENV_NAME}" -c conda-forge "python=${PYVER}" ffmpeg git
+  conda create -y -n "${ENV_NAME}" -c conda-forge "python=${PYVER}" pip ffmpeg git
 else
   echo "==> Reusing existing conda env '${ENV_NAME}'"
 fi
@@ -51,6 +51,11 @@ conda activate "${ENV_NAME}"
 # the per-user site so everything lands inside the conda env.
 PY="${CONDA_ROOT}/envs/${ENV_NAME}/bin/python"
 export PYTHONNOUSERSITE=1
+# The env may have been created without pip; bootstrap it if missing.
+if ! "${PY}" -m pip --version >/dev/null 2>&1; then
+  echo "==> pip missing in env; bootstrapping with ensurepip"
+  "${PY}" -m ensurepip --upgrade || conda install -y -n "${ENV_NAME}" -c conda-forge pip
+fi
 PIP="${PY} -m pip --disable-pip-version-check"
 echo "==> Using interpreter: ${PY}"
 "${PY}" -c "import sys; print('site:', sys.prefix)"
