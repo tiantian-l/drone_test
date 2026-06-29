@@ -12,6 +12,11 @@ ENV_NAME="${ENV_NAME:-drone}"
 source "${CONDA_ROOT}/etc/profile.d/conda.sh"
 conda activate "${ENV_NAME}"
 
+# Use the env's interpreter explicitly and disable the per-user site so the
+# system Python 3.10 packages in ~/.local can't shadow the conda env.
+PY="${CONDA_ROOT}/envs/${ENV_NAME}/bin/python"
+export PYTHONNOUSERSITE=1
+
 # drone_nav lives at the repo root; expose it so `import drone_nav` resolves
 # when main.py runs from inside third_party/dreamerv3.
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
@@ -20,7 +25,7 @@ export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 LOGDIR="${LOGDIR:-$HOME/logdir/drone_nav/{timestamp}}"
 
 cd "${REPO_ROOT}/third_party/dreamerv3"
-python dreamerv3/main.py \
+"${PY}" dreamerv3/main.py \
   --configs drone_nav \
   --logdir "${LOGDIR}" \
   --jax.platform cuda \

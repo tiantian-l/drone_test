@@ -43,28 +43,39 @@ else
   echo "==> Reusing existing conda env '${ENV_NAME}'"
 fi
 conda activate "${ENV_NAME}"
-pip install -U pip setuptools wheel
+
+# The school box already has a system Python 3.10 with packages in
+# ~/.local; if conda activate fails to fully prepend the env (or a stray
+# pip resolves to the system one), installs leak there and the env's
+# python can never import them. Pin pip to the env interpreter and disable
+# the per-user site so everything lands inside the conda env.
+PY="${CONDA_ROOT}/envs/${ENV_NAME}/bin/python"
+export PYTHONNOUSERSITE=1
+PIP="${PY} -m pip --disable-pip-version-check"
+echo "==> Using interpreter: ${PY}"
+"${PY}" -c "import sys; print('site:', sys.prefix)"
+${PIP} install -U pip setuptools wheel
 
 # ---------------------------------------------------------------------------
 # 3) Install the drone env + DreamerV3 (CUDA JAX bundles its own CUDA runtime)
 # ---------------------------------------------------------------------------
 echo "==> Installing gym-pybullet-drones (drone env only)"
-pip install "numpy<2"
-pip install -e "${REPO_ROOT}/third_party/gym-pybullet-drones"
+${PIP} install "numpy<2"
+${PIP} install -e "${REPO_ROOT}/third_party/gym-pybullet-drones"
 
 echo "==> Installing DreamerV3 requirements with CUDA JAX"
 # Drop jax/jaxlib (we pin 0.4.33 below) AND optax: the unpinned optax resolves
 # to 0.2.8, which forces jax>=0.5.3 and silently breaks our 0.4.33 install.
 # optax 0.2.4 is the newest release still compatible with jax 0.4.33.
 grep -vE '^(jax|jaxlib|optax)' "${REPO_ROOT}/third_party/dreamerv3/requirements.txt" > /tmp/req-nojax.txt
-pip install -r /tmp/req-nojax.txt
-pip install "optax==0.2.4" "jax[cuda12]==0.4.33"
+${PIP} install -r /tmp/req-nojax.txt
+${PIP} install "optax==0.2.4" "jax[cuda12]==0.4.33"
 
 # ---------------------------------------------------------------------------
 # 4) Sanity check (use the env's own interpreter, not whatever `python` is)
 # ---------------------------------------------------------------------------
 echo "==> Sanity check"
-"${CONDA_ROOT}/envs/${ENV_NAME}/bin/python" - <<'PY'
+"${PY}" - <<'PY'
 import jax, optax, gym_pybullet_drones, gymnasium, embodied, elements
 print("jax:", jax.__version__, "optax:", optax.__version__)
 print("jax devices:", jax.devices())
