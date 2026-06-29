@@ -17,6 +17,10 @@ conda activate "${ENV_NAME}"
 PY="${CONDA_ROOT}/envs/${ENV_NAME}/bin/python"
 export PYTHONNOUSERSITE=1
 
+# Put the env's bin first on PATH so the conda-installed ffmpeg is found.
+# Without it, GIF/video summaries fail with "ffmpeg in $PATH ... Broken pipe".
+export PATH="${CONDA_ROOT}/envs/${ENV_NAME}/bin:${PATH}"
+
 # drone_nav lives at the repo root; expose it (and embodied/elements under
 # third_party/dreamerv3) so imports resolve when main.py runs from inside
 # third_party/dreamerv3.

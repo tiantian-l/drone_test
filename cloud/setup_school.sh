@@ -75,6 +75,10 @@ echo "==> Installing DreamerV3 requirements with CUDA JAX"
 grep -vE '^(jax|jaxlib|optax)' "${REPO_ROOT}/third_party/dreamerv3/requirements.txt" > /tmp/req-nojax.txt
 ${PIP} install -r /tmp/req-nojax.txt
 ${PIP} install "optax==0.2.4" "jax[cuda12]==0.4.33"
+# elements' TensorBoardOutput imports tensorflow; install the CPU build (JAX
+# owns the GPU) so tensorboard logging works without an extra system package.
+${PIP} install "tensorflow-cpu<2.16"
+${PIP} install tensorboard
 
 # ---------------------------------------------------------------------------
 # 4) Sanity check (use the env's own interpreter, not whatever `python` is)
@@ -84,7 +88,8 @@ echo "==> Sanity check"
 export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/third_party/dreamerv3:${PYTHONPATH:-}"
 "${PY}" - <<'PY'
 import jax, optax, gym_pybullet_drones, gymnasium, embodied, elements
-print("jax:", jax.__version__, "optax:", optax.__version__)
+import tensorflow as tf  # noqa: needed by elements TensorBoardOutput
+print("jax:", jax.__version__, "optax:", optax.__version__, "tf:", tf.__version__)
 print("jax devices:", jax.devices())
 import drone_nav  # noqa
 print("drone_nav import OK")
