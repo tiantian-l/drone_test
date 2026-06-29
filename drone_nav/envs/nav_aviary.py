@@ -741,7 +741,9 @@ class NavigationAviary(BaseRLAviary):
         """Precompute the isometric camera scale/offset so the whole flight
         volume fits the frame. Runs once (depends only on BOUNDS / VIDEO_SIZE)."""
         az = np.deg2rad(40.0)     # azimuth: view from the south-east
-        el = np.deg2rad(28.0)     # elevation above the horizon
+        el = np.deg2rad(55.0)     # high (near bird's-eye) so tall pillars stay
+                                  # short on screen and never bury the drone
+        self._iso_el = el
         d = np.array([np.cos(el) * np.cos(az),
                       np.cos(el) * np.sin(az), -np.sin(el)], dtype=np.float32)
         right = np.array([-np.sin(az), np.cos(az), 0.0], dtype=np.float32)
@@ -897,7 +899,7 @@ class NavigationAviary(BaseRLAviary):
         by = int(round(float(bpy[0])))
         ty = int(round(float(tpy[0])))
         hw = max(2, int(round(radius * self._iso_scale)))
-        rye = max(1, int(round(hw * np.sin(np.deg2rad(28.0)))))
+        rye = max(1, int(round(hw * np.sin(self._iso_el))))
         # Semi-transparent body (so the drone behind stays visible), a brighter
         # shaded edge, a darker base rim and a brighter top cap.
         a = 0.72
