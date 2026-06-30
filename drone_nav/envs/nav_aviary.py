@@ -55,6 +55,21 @@ class NavigationAviary(BaseRLAviary):
                  episode_len_sec: int = 20, # change to 20，for speed limit is 0.25m/s
                  bounds=((-3.0, 3.0), (-3.0, 3.0), (0.05, 3.0)),
                  include_angular_velocity: bool = False,
+                 # ---- obstacles (static collision pillars) -----------------
+                 obstacles_enabled: bool = True,
+                 n_obstacles: int = 12,
+                 n_corridor_obstacles: int = 3,
+                 obstacle_radius_range=(0.10, 0.22),
+                 obstacle_height: float = 3.0,
+                 obstacle_clear_radius: float = 0.5,
+                 corridor_half_width: float = 0.6,
+                 obstacle_min_separation: float = 0.45,
+                 collision_distance: float = 0.06,
+                 # ---- lidar (2D horizontal range scan) ---------------------
+                 lidar_enabled: bool = True,
+                 lidar_n_beams: int = 32,
+                 lidar_range: float = 4.0,
+                 lidar_start_offset: float = 0.06,
                  # ---- logging / visualization ------------------------------
                  log_video: bool = False,
                  render_mode: str = "3d",
@@ -73,6 +88,32 @@ class NavigationAviary(BaseRLAviary):
         self.START_RANGE = np.array(start_sample_range, dtype=np.float32)
         self.BOUNDS = np.array(bounds, dtype=np.float32)
         self.INCLUDE_ANG_VEL = bool(include_angular_velocity)
+
+        # Obstacle configuration ----------------------------------------------
+        self.OBSTACLES_ENABLED = bool(obstacles_enabled)
+        self.N_OBSTACLES = int(n_obstacles)
+        self.N_CORRIDOR_OBSTACLES = int(n_corridor_obstacles)
+        self.OBSTACLE_RADIUS_RANGE = (float(obstacle_radius_range[0]),
+                                      float(obstacle_radius_range[1]))
+        self.OBSTACLE_HEIGHT = float(obstacle_height)
+        self.OBSTACLE_CLEAR_RADIUS = float(obstacle_clear_radius)
+        self.CORRIDOR_HALF_WIDTH = float(corridor_half_width)
+        self.OBSTACLE_MIN_SEPARATION = float(obstacle_min_separation)
+        self.COLLISION_DISTANCE = float(collision_distance)
+        self._obstacle_specs = []     # (x, y, radius) tuples for this episode
+        self._obstacle_ids = []       # PyBullet body ids (rebuilt each reset)
+        self._clearance_cache = (-1, np.inf)  # (step_counter, min surface dist)
+        self._last_lidar = None       # most recent normalized scan (cached)
+        self._min_lidar = np.inf      # closest lidar reading (m) this episode
+
+        # Lidar configuration -------------------------------------------------
+        self.LIDAR_ENABLED = bool(lidar_enabled)
+        self.LIDAR_N_BEAMS = int(lidar_n_beams)
+        self.LIDAR_RANGE = float(lidar_range)
+        self.LIDAR_START_OFFSET = float(lidar_start_offset)
+        # Body-frame beam directions, evenly spaced over the full circle.
+        self._lidar_angles = np.linspace(
+            0.0, 2.0 * np.pi, self.LIDAR_N_BEAMS, endpoint=False).astype(np.float32)
 
         # Visualization (third-person RGB frames for DreamerV3 log/image) -----
         # render_mode == "3d" -> photorealistic PyBullet camera (GPU OpenGL on
@@ -101,6 +142,9 @@ class NavigationAviary(BaseRLAviary):
            # "time_penalty": 0.0,    # constant per-step penalty (encourages speed)
             "time_penalty": 0.01, 
             "crash_penalty": 10.0,  # penalty on termination by crash / out-of-bounds
+            "collision_penalty": 10.0,  # one-off penalty when hitting an obstacle
+            "obstacle_proximity": 0.5,  # per-step penalty inside the safety margin
+            "safety_margin": 0.30,      # distance (m) where proximity penalty starts
             "action_smooth": 0.0,   # penalty on change of action between steps
             "tilt_penalty": 0.0,    # penalty proportional to roll/pitch magnitude
             "alive": 0.0,           # constant per-step survival reward
@@ -158,6 +202,78 @@ class NavigationAviary(BaseRLAviary):
                      else self._sample_in_range(self.START_RANGE))
             self.INIT_XYZS = start.reshape(1, 3)
 
+        # Sample the obstacle layout for the upcoming episode. Only the
+        # positions are chosen here; the PyBullet bodies are created later in
+        # `_addObstacles` (after `super().reset()` rebuilds the simulation).
+        self._sample_obstacles()
+
+    ################################################################################
+
+    def _sample_obstacles(self):
+        """Sample static cylinder obstacles for the upcoming episode.
+
+        Guarantees ``N_CORRIDOR_OBSTACLES`` pillars land inside the corridor
+        between start and goal (so the drone *must* learn to avoid them), then
+        scatters the rest across the arena. Start and goal neighbourhoods are
+        kept clear, and a minimum separation keeps a navigable gap between
+        pillars.
+        """
+        self._obstacle_specs = []
+        if not self.OBSTACLES_ENABLED or self.N_OBSTACLES <= 0:
+            return
+
+        start_xy = np.asarray(self.INIT_XYZS[0][:2], dtype=np.float32)
+        goal_xy = np.asarray(self.TARGET_POS[:2], dtype=np.float32)
+        (xl, xh), (yl, yh), _ = self.BOUNDS
+        seg = goal_xy - start_xy
+        seg_len = float(np.linalg.norm(seg))
+        seg_dir = (seg / seg_len if seg_len > 1e-6
+                   else np.array([1.0, 0.0], dtype=np.float32))
+        perp = np.array([-seg_dir[1], seg_dir[0]], dtype=np.float32)
+        rlo, rhi = self.OBSTACLE_RADIUS_RANGE
+
+        def _ok(x, y, radius):
+            q = np.array([x, y], dtype=np.float32)
+            if x < xl or x > xh or y < yl or y > yh:
+                return False
+            if np.linalg.norm(q - start_xy) < self.OBSTACLE_CLEAR_RADIUS + radius:
+                return False
+            if np.linalg.norm(q - goal_xy) < self.OBSTACLE_CLEAR_RADIUS + radius:
+                return False
+            for (ox, oy, orad) in self._obstacle_specs:
+                if np.linalg.norm(q - np.array([ox, oy], dtype=np.float32)) < (
+                        self.OBSTACLE_MIN_SEPARATION + radius + orad):
+                    return False
+            return True
+
+        max_tries = 200
+        # 1) Corridor obstacles: along the start->goal segment with a small
+        #    lateral offset so a gap remains to fly around them.
+        n_corridor = min(self.N_CORRIDOR_OBSTACLES, self.N_OBSTACLES)
+        for _ in range(n_corridor):
+            for _try in range(max_tries):
+                t = self.np_random.uniform(0.25, 0.75)
+                off = self.np_random.uniform(-self.CORRIDOR_HALF_WIDTH,
+                                             self.CORRIDOR_HALF_WIDTH)
+                radius = float(self.np_random.uniform(rlo, rhi))
+                c = start_xy + t * seg + off * perp
+                if _ok(float(c[0]), float(c[1]), radius):
+                    self._obstacle_specs.append((float(c[0]), float(c[1]), radius))
+                    break
+        # 2) Scatter the remaining obstacles anywhere in the arena.
+        while len(self._obstacle_specs) < self.N_OBSTACLES:
+            placed = False
+            for _try in range(max_tries):
+                x = float(self.np_random.uniform(xl, xh))
+                y = float(self.np_random.uniform(yl, yh))
+                radius = float(self.np_random.uniform(rlo, rhi))
+                if _ok(x, y, radius):
+                    self._obstacle_specs.append((x, y, radius))
+                    placed = True
+                    break
+            if not placed:
+                break  # arena too crowded; stop trying
+
     ################################################################################
 
     def reset(self, seed=None, options=None):
@@ -181,6 +297,11 @@ class NavigationAviary(BaseRLAviary):
         # lazily recreated on the next render.
         self._trail_bodies = []
         self._drone_marker_id = None
+        # `_addObstacles` (run inside super().reset() housekeeping) already
+        # rebuilt `self._obstacle_ids`; only the per-step cache needs clearing.
+        self._clearance_cache = (-1, np.inf)
+        self._last_lidar = None
+        self._min_lidar = np.inf
         return obs, info
 
     ################################################################################
@@ -188,9 +309,16 @@ class NavigationAviary(BaseRLAviary):
     ################################################################################
 
     def _observationSpace(self):
-        dim = 12 if self.INCLUDE_ANG_VEL else 9
-        hi = np.inf * np.ones(dim, dtype=np.float32)
-        return spaces.Box(low=-hi, high=hi, shape=(dim,), dtype=np.float32)
+        base = 12 if self.INCLUDE_ANG_VEL else 9
+        low = [-np.inf * np.ones(base, dtype=np.float32)]
+        high = [np.inf * np.ones(base, dtype=np.float32)]
+        if self.LIDAR_ENABLED:
+            # Normalized ranges in [0, 1] (1 == free out to LIDAR_RANGE).
+            low.append(np.zeros(self.LIDAR_N_BEAMS, dtype=np.float32))
+            high.append(np.ones(self.LIDAR_N_BEAMS, dtype=np.float32))
+        low = np.concatenate(low)
+        high = np.concatenate(high)
+        return spaces.Box(low=low, high=high, shape=low.shape, dtype=np.float32)
 
     def _computeObs(self):
         s = self._getDroneStateVector(0)
@@ -200,7 +328,47 @@ class NavigationAviary(BaseRLAviary):
         parts = [rel_goal, vel, rpy]
         if self.INCLUDE_ANG_VEL:
             parts.append(s[13:16])             # body angular velocity
+        if self.LIDAR_ENABLED:
+            parts.append(self._read_lidar(s))  # 32-beam normalized ranges
         return np.concatenate(parts).astype(np.float32)
+
+    def _read_lidar(self, s=None):
+        """Cast ``LIDAR_N_BEAMS`` horizontal rays; return normalized ranges.
+
+        Returns an array in [0, 1] where 1.0 means "free out to LIDAR_RANGE"
+        and smaller values mean a closer obstacle along that beam. Rays are
+        body-frame (rotated by yaw) and ignore the drone itself and the ground
+        plane. With no obstacles the scan is all ones.
+        """
+        n = self.LIDAR_N_BEAMS
+        if not self.OBSTACLES_ENABLED or not self._obstacle_ids:
+            return np.ones(n, dtype=np.float32)
+        if s is None:
+            s = self._getDroneStateVector(0)
+        pos = s[0:3]
+        yaw = float(s[9])
+        angles = self._lidar_angles + yaw
+        cos_a = np.cos(angles)
+        sin_a = np.sin(angles)
+        z = np.full(n, float(pos[2]), dtype=np.float32)
+        froms = np.stack([pos[0] + self.LIDAR_START_OFFSET * cos_a,
+                          pos[1] + self.LIDAR_START_OFFSET * sin_a, z], axis=1)
+        tos = np.stack([pos[0] + self.LIDAR_RANGE * cos_a,
+                        pos[1] + self.LIDAR_RANGE * sin_a, z], axis=1)
+        ranges = np.ones(n, dtype=np.float32)
+        try:
+            results = p.rayTestBatch(
+                froms.tolist(), tos.tolist(), physicsClientId=self.CLIENT)
+            drone_id = int(self.DRONE_IDS[0])
+            for i, r in enumerate(results):
+                hit_id = r[0]
+                if hit_id in (-1, drone_id, self.PLANE_ID):
+                    continue
+                ranges[i] = float(r[2])  # hitFraction in [0, 1]
+        except Exception:
+            pass
+        self._last_lidar = ranges
+        return ranges
 
     ################################################################################
     # Reward
@@ -224,6 +392,8 @@ class NavigationAviary(BaseRLAviary):
             "action_smooth": 0.0,
             "goal_bonus": 0.0,
             "crash_penalty": 0.0,
+            "obstacle_proximity": 0.0,
+            "collision_penalty": 0.0,
         }
 
         # 1) Potential-based progress shaping: positive when getting closer.
@@ -257,6 +427,20 @@ class NavigationAviary(BaseRLAviary):
         if self._is_crash(s):
             terms["crash_penalty"] = -self.RW["crash_penalty"]
 
+        # 7) Obstacle proximity shaping: penalize entering the safety margin so
+        #    the agent keeps clearance instead of grazing pillars.
+        margin = self.RW["safety_margin"]
+        if self.RW["obstacle_proximity"] and margin > 0:
+            clearance = self._obstacle_clearance()
+            if np.isfinite(clearance) and clearance < margin:
+                frac = 1.0 - max(clearance, 0.0) / margin
+                terms["obstacle_proximity"] = (
+                    -self.RW["obstacle_proximity"] * float(frac))
+
+        # 8) Obstacle collision penalty (mirrors _computeTerminated).
+        if self._is_collision():
+            terms["collision_penalty"] = -self.RW["collision_penalty"]
+
         self._reward_terms = terms
         return float(sum(terms.values()))
 
@@ -274,12 +458,38 @@ class NavigationAviary(BaseRLAviary):
         too_tilted = abs(s[7]) > 1.2 or abs(s[8]) > 1.2
         return self._is_out_of_bounds(s) or too_tilted
 
+    def _obstacle_clearance(self):
+        """Min surface distance from the drone to any obstacle (cached per step)."""
+        if not self.OBSTACLES_ENABLED or not self._obstacle_ids:
+            return np.inf
+        if self._clearance_cache[0] == self.step_counter:
+            return self._clearance_cache[1]
+        min_d = np.inf
+        try:
+            drone_id = int(self.DRONE_IDS[0])
+            query = max(self.COLLISION_DISTANCE, self.RW["safety_margin"]) + 0.05
+            for bid in self._obstacle_ids:
+                for pt in p.getClosestPoints(
+                        drone_id, bid, distance=query,
+                        physicsClientId=self.CLIENT):
+                    if pt[8] < min_d:
+                        min_d = pt[8]
+        except Exception:
+            pass
+        self._clearance_cache = (self.step_counter, min_d)
+        return min_d
+
+    def _is_collision(self):
+        return self._obstacle_clearance() < self.COLLISION_DISTANCE
+
     def _computeTerminated(self):
         s = self._getDroneStateVector(0)
         if np.linalg.norm(self.TARGET_POS - s[0:3]) < self.GOAL_TOLERANCE:
             return True   # success
         if self._is_crash(s):
-            return True   # failure
+            return True   # failure (out-of-bounds / excessive tilt)
+        if self._is_collision():
+            return True   # failure (hit an obstacle)
         return False
 
     def _is_timeout(self):
@@ -300,19 +510,32 @@ class NavigationAviary(BaseRLAviary):
             self._min_dist = dist
         success = dist < self.GOAL_TOLERANCE
         crash = self._is_crash(s)
+        collision = self._is_collision()
+        # Closest obstacle distance (m) as sensed by the lidar this step, and
+        # its running minimum over the episode. With no obstacles in view the
+        # scan is all ones -> LIDAR_RANGE. Tracking the episode MIN shows
+        # whether the agent learns to keep more clearance over training.
+        if self._last_lidar is not None:
+            lidar_dist = float(np.min(self._last_lidar)) * self.LIDAR_RANGE
+        else:
+            lidar_dist = self.LIDAR_RANGE
+        if lidar_dist < self._min_lidar:
+            self._min_lidar = lidar_dist
         # Timeout is only a "result" when the episode ends by the time limit
-        # without first succeeding or crashing.
-        timeout = bool(self._is_timeout() and not (success or crash))
+        # without first succeeding, crashing, or colliding.
+        timeout = bool(self._is_timeout() and not (success or crash or collision))
         return {
-            # ---- task result (5 core nav metrics) -----------------------
+            # ---- task result (nav + avoidance metrics) ------------------
             "is_success": bool(success),     # -> log/last/success
             "is_crash": bool(crash),         # -> log/last/crash
+            "is_collision": bool(collision), # -> log/last/collision
             "is_timeout": timeout,           # -> log/last/timeout
             "final_distance": dist,          # -> log/last/final_distance
             "min_distance": float(self._min_dist),  # -> log/min/min_distance
+            "min_lidar_dist": float(self._min_lidar),  # -> log/min/min_lidar_dist
             # FromGym/embodied uses is_terminal to mask bootstrapping; a
-            # time-limit truncation is NOT terminal, a crash/success is.
-            "is_terminal": bool(success or crash),
+            # time-limit truncation is NOT terminal, a crash/collision/success is.
+            "is_terminal": bool(success or crash or collision),
             "goal": self.TARGET_POS.copy(),
         }
 
@@ -341,6 +564,28 @@ class NavigationAviary(BaseRLAviary):
                 physicsClientId=self.CLIENT)
         except Exception:
             self._goal_marker_id = None
+
+        # Static obstacle pillars (real collision bodies, mass 0). Recreated
+        # every reset because BaseAviary.reset() wipes the simulation.
+        self._obstacle_ids = []
+        for (ox, oy, radius) in self._obstacle_specs:
+            try:
+                col = p.createCollisionShape(
+                    p.GEOM_CYLINDER, radius=radius, height=self.OBSTACLE_HEIGHT,
+                    physicsClientId=self.CLIENT)
+                vis = p.createVisualShape(
+                    p.GEOM_CYLINDER, radius=radius, length=self.OBSTACLE_HEIGHT,
+                    rgbaColor=[0.55, 0.35, 0.20, 0.45],
+                    physicsClientId=self.CLIENT)
+                bid = p.createMultiBody(
+                    baseMass=0,
+                    baseCollisionShapeIndex=col,
+                    baseVisualShapeIndex=vis,
+                    basePosition=[ox, oy, self.OBSTACLE_HEIGHT / 2.0],
+                    physicsClientId=self.CLIENT)
+                self._obstacle_ids.append(bid)
+            except Exception:
+                pass
 
     @property
     def video_shape(self):
@@ -486,15 +731,17 @@ class NavigationAviary(BaseRLAviary):
         self._update_drone_marker(drone_pos)
 
         # Frame both the drone and the goal: look at their midpoint and back
-        # the camera off proportionally to their separation.
+        # the camera off proportionally to their separation. A steep, mostly
+        # top-down pitch keeps the (semi-transparent) 3 m obstacle pillars from
+        # occluding the drone in the recorded video.
         target = (0.5 * (drone_pos + goal)).tolist()
         sep = float(np.linalg.norm(drone_pos - goal))
-        distance = float(np.clip(1.6 + 0.8 * sep, 2.0, 7.0))
+        distance = float(np.clip(2.4 + 0.9 * sep, 3.0, 9.0))
         self._cam_yaw = (self._cam_yaw + 0.35) % 360.0
 
         view = p.computeViewMatrixFromYawPitchRoll(
             cameraTargetPosition=target, distance=distance,
-            yaw=self._cam_yaw, pitch=-32.0, roll=0.0, upAxisIndex=2,
+            yaw=self._cam_yaw, pitch=-65.0, roll=0.0, upAxisIndex=2,
             physicsClientId=self.CLIENT)
         proj = p.computeProjectionMatrixFOV(
             fov=60.0, aspect=float(w) / float(h), nearVal=0.05, farVal=100.0,
@@ -585,6 +832,17 @@ class NavigationAviary(BaseRLAviary):
         image[-2:, :, :] = border
         image[:, 0:2, :] = border
         image[:, -2:, :] = border
+
+        # Static obstacle pillars as filled brown discs.
+        if self._obstacle_specs:
+            (xl, xh), _, _ = self.BOUNDS
+            span_x = max(float(xh - xl), 1e-6)
+            scale = (self.VIDEO_SIZE[1] - 1) * (1.0 - 0.16)
+            obs_color = np.array([140, 100, 70], dtype=np.uint8)
+            for (ox, oy, radius) in self._obstacle_specs:
+                ox_px, oy_px = self._world_to_pixel(float(ox), float(oy))
+                r_px = max(2, int(round(radius / span_x * scale)))
+                self._draw_disc(image, ox_px, oy_px, r_px, obs_color)
 
         if len(self._trail) >= 2:
             trail_color = np.array([52, 120, 220], dtype=np.uint8)

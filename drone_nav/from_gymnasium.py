@@ -224,9 +224,11 @@ def make_drone_nav(task, log_image=False, video_every=20, index=0, **kwargs):
         log_keys=(
             ("is_success", "success", "last"),
             ("is_crash", "crash", "last"),
+            ("is_collision", "collision", "last"),
             ("is_timeout", "timeout", "last"),
             ("final_distance", "final_distance", "last"),
             ("min_distance", "min_distance", "min"),
+            ("min_lidar_dist", "min_lidar_dist", "min"),
         ),
         log_image=log_image,
         worker_index=index,
