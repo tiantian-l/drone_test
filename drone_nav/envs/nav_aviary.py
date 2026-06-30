@@ -73,7 +73,7 @@ class NavigationAviary(BaseRLAviary):
                  # ---- logging / visualization ------------------------------
                  log_video: bool = False,
                  render_mode: str = "3d",
-                 video_size=(256, 256),
+                 video_size=(512, 512),
                  trail_length: int = 80,
                  trail_markers: int = 30,
                  # ---- reward weights ---------------------------------------
@@ -731,9 +731,10 @@ class NavigationAviary(BaseRLAviary):
         self._update_drone_marker(drone_pos)
 
         # Frame both the drone and the goal: look at their midpoint and back
-        # the camera off proportionally to their separation. A steep, mostly
-        # top-down pitch keeps the (semi-transparent) 3 m obstacle pillars from
-        # occluding the drone in the recorded video.
+        # the camera off proportionally to their separation. A moderately
+        # high (but not fully top-down) pitch keeps the (semi-transparent) 3 m
+        # obstacle pillars from occluding the drone while preserving enough of
+        # an oblique angle for a clear, readable 3D view.
         target = (0.5 * (drone_pos + goal)).tolist()
         sep = float(np.linalg.norm(drone_pos - goal))
         distance = float(np.clip(2.4 + 0.9 * sep, 3.0, 9.0))
@@ -741,7 +742,7 @@ class NavigationAviary(BaseRLAviary):
 
         view = p.computeViewMatrixFromYawPitchRoll(
             cameraTargetPosition=target, distance=distance,
-            yaw=self._cam_yaw, pitch=-65.0, roll=0.0, upAxisIndex=2,
+            yaw=self._cam_yaw, pitch=-50.0, roll=0.0, upAxisIndex=2,
             physicsClientId=self.CLIENT)
         proj = p.computeProjectionMatrixFOV(
             fov=60.0, aspect=float(w) / float(h), nearVal=0.05, farVal=100.0,
