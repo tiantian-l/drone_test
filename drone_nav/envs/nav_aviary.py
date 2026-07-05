@@ -48,23 +48,46 @@ class NavigationAviary(BaseRLAviary):
                  goal_pos=None,
                  start_pos=None,
                  randomize_goal: bool = True,
-                 randomize_start: bool = False,
-                 goal_sample_range=((-2.0, 2.0), (-2.0, 2.0), (0.5, 2.0)),
-                 start_sample_range=((-0.2, 0.2), (-0.2, 0.2), (0.9, 1.1)),
+                 randomize_start: bool = True,
+                 # Left->right layout on a 10m x 10m arena: the start is
+                 # sampled on the LEFT edge, the goal on the RIGHT edge, both
+                 # randomized along y so every episode is a different crossing.
+                 goal_sample_range=((3.5, 4.5), (-4.0, 4.0), (0.5, 2.0)),
+                 start_sample_range=((-4.5, -3.5), (-4.0, 4.0), (0.9, 1.1)),
                  goal_tolerance: float = 0.10,
-                 episode_len_sec: int = 20, # change to 20，for speed limit is 0.25m/s
-                 bounds=((-3.0, 3.0), (-3.0, 3.0), (0.05, 3.0)),
+                 # A ~9 m crossing at the CF2X 0.25 m/s velocity cap needs a
+                 # long horizon (~36 s straight line + time to weave around the
+                 # obstacles); shorten this only if `speed_limit` is raised.
+                 episode_len_sec: int = 60,
+                 bounds=((-5.0, 5.0), (-5.0, 5.0), (0.05, 3.0)),
                  include_angular_velocity: bool = False,
+                 # Optional override (m/s) of the DSL-PID velocity controller's
+                 # speed cap. ``None`` keeps gym-pybullet-drones' default
+                 # (0.25 m/s for CF2X); raising it lets the drone cross the
+                 # larger arena faster so a shorter horizon stays feasible.
+                 speed_limit=None,
+                 # ---- deterministic evaluation -----------------------------
+                 # When True the whole task (start / goal / obstacles) is
+                 # regenerated from a FIXED per-env seed on every reset, so the
+                 # evaluation set is identical across eval cycles. Training envs
+                 # keep eval_mode=False and re-randomize every episode.
+                 eval_mode: bool = False,
+                 eval_seed: int = 0,
                  # ---- obstacles (static collision pillars) -----------------
                  obstacles_enabled: bool = True,
-                 n_obstacles: int = 12,
-                 n_corridor_obstacles: int = 3,
-                 obstacle_radius_range=(0.10, 0.22),
+                 n_obstacles: int = 20,
+                 obstacle_radius_range=(0.12, 0.28),
                  obstacle_height: float = 3.0,
-                 obstacle_clear_radius: float = 0.5,
-                 corridor_half_width: float = 0.6,
+                 obstacle_clear_radius: float = 0.6,
                  obstacle_min_separation: float = 0.45,
                  collision_distance: float = 0.06,
+                 # ---- guaranteed-feasible map (grid BFS) -------------------
+                 # After sampling, a start->goal path is verified on an inflated
+                 # occupancy grid; layouts without a corridor are resampled so
+                 # the goal is always reachable.
+                 path_clearance: float = 0.16,
+                 path_cell_size: float = 0.20,
+                 obstacle_layout_tries: int = 40,
                  # ---- lidar (2D horizontal range scan) ---------------------
                  lidar_enabled: bool = True,
                  lidar_n_beams: int = 32,
@@ -88,18 +111,25 @@ class NavigationAviary(BaseRLAviary):
         self.START_RANGE = np.array(start_sample_range, dtype=np.float32)
         self.BOUNDS = np.array(bounds, dtype=np.float32)
         self.INCLUDE_ANG_VEL = bool(include_angular_velocity)
+        self.SPEED_LIMIT_OVERRIDE = None if speed_limit is None else float(speed_limit)
+
+        # Deterministic-eval configuration ------------------------------------
+        self.EVAL_MODE = bool(eval_mode)
+        self.EVAL_SEED = int(eval_seed)
 
         # Obstacle configuration ----------------------------------------------
         self.OBSTACLES_ENABLED = bool(obstacles_enabled)
         self.N_OBSTACLES = int(n_obstacles)
-        self.N_CORRIDOR_OBSTACLES = int(n_corridor_obstacles)
         self.OBSTACLE_RADIUS_RANGE = (float(obstacle_radius_range[0]),
                                       float(obstacle_radius_range[1]))
         self.OBSTACLE_HEIGHT = float(obstacle_height)
         self.OBSTACLE_CLEAR_RADIUS = float(obstacle_clear_radius)
-        self.CORRIDOR_HALF_WIDTH = float(corridor_half_width)
         self.OBSTACLE_MIN_SEPARATION = float(obstacle_min_separation)
         self.COLLISION_DISTANCE = float(collision_distance)
+        # Feasibility-check knobs (grid BFS over an inflated occupancy map).
+        self.PATH_CLEARANCE = float(path_clearance)
+        self.PATH_CELL_SIZE = float(path_cell_size)
+        self.OBSTACLE_LAYOUT_TRIES = int(obstacle_layout_tries)
         self._obstacle_specs = []     # (x, y, radius) tuples for this episode
         self._obstacle_ids = []       # PyBullet body ids (rebuilt each reset)
         self._clearance_cache = (-1, np.inf)  # (step_counter, min surface dist)
@@ -174,7 +204,7 @@ class NavigationAviary(BaseRLAviary):
         self._reward_terms = {}       # per-step reward breakdown (for logging)
 
         if initial_xyzs is None:
-            initial_xyzs = np.array([[0.0, 0.0, 1.0]], dtype=np.float32)
+            initial_xyzs = np.array([[-4.0, 0.0, 1.0]], dtype=np.float32)
 
         super().__init__(drone_model=drone_model,
                          num_drones=1,
@@ -187,6 +217,12 @@ class NavigationAviary(BaseRLAviary):
                          record=record,
                          obs=ObservationType.KIN,
                          act=ActionType.VEL)
+
+        # Optionally raise the DSL-PID velocity cap so the drone can cross the
+        # larger arena faster (BaseRLAviary sets SPEED_LIMIT for ActionType.VEL
+        # to ~0.25 m/s for CF2X, which is very slow over 10 m).
+        if self.SPEED_LIMIT_OVERRIDE is not None:
+            self.SPEED_LIMIT = self.SPEED_LIMIT_OVERRIDE
 
         # Set up the offscreen renderer used for the third-person video. On a
         # Linux GPU box (e.g. Tesla T4) this loads PyBullet's EGL plugin so the
@@ -225,11 +261,13 @@ class NavigationAviary(BaseRLAviary):
     def _sample_obstacles(self):
         """Sample static cylinder obstacles for the upcoming episode.
 
-        Guarantees ``N_CORRIDOR_OBSTACLES`` pillars land inside the corridor
-        between start and goal (so the drone *must* learn to avoid them), then
-        scatters the rest across the arena. Start and goal neighbourhoods are
-        kept clear, and a minimum separation keeps a navigable gap between
-        pillars.
+        Obstacles are scattered mainly across the central band of the arena
+        (between the left-side start and the right-side goal) so the drone must
+        weave through them. Start and goal neighbourhoods are kept clear and a
+        minimum separation preserves gaps between pillars. Crucially, every
+        candidate layout is validated with a grid BFS (``_path_exists``): if the
+        pillars would wall the goal off, the layout is resampled until a
+        traversable corridor remains, so the goal is always reachable.
         """
         self._obstacle_specs = []
         if not self.OBSTACLES_ENABLED or self.N_OBSTACLES <= 0:
@@ -237,13 +275,34 @@ class NavigationAviary(BaseRLAviary):
 
         start_xy = np.asarray(self.INIT_XYZS[0][:2], dtype=np.float32)
         goal_xy = np.asarray(self.TARGET_POS[:2], dtype=np.float32)
+
+        # Try whole layouts until one is provably feasible.
+        best = []
+        for _ in range(self.OBSTACLE_LAYOUT_TRIES):
+            specs = self._try_sample_layout(start_xy, goal_xy)
+            if self._path_exists(start_xy, goal_xy, specs):
+                self._obstacle_specs = specs
+                return
+            best = specs
+        # Fallback: drop pillars from the last (infeasible) layout one by one
+        # until a corridor opens up, guaranteeing the goal stays reachable.
+        while best and not self._path_exists(start_xy, goal_xy, best):
+            best.pop()
+        self._obstacle_specs = best
+
+    def _try_sample_layout(self, start_xy, goal_xy):
+        """Sample one candidate obstacle layout (no feasibility guarantee)."""
         (xl, xh), (yl, yh), _ = self.BOUNDS
-        seg = goal_xy - start_xy
-        seg_len = float(np.linalg.norm(seg))
-        seg_dir = (seg / seg_len if seg_len > 1e-6
-                   else np.array([1.0, 0.0], dtype=np.float32))
-        perp = np.array([-seg_dir[1], seg_dir[0]], dtype=np.float32)
         rlo, rhi = self.OBSTACLE_RADIUS_RANGE
+        specs = []
+        # Keep pillars away from the arena walls and concentrate them in the
+        # band spanning start->goal along x so the crossing is obstructed.
+        wall = float(max(rhi, 0.3))
+        x_lo = min(float(start_xy[0]), float(goal_xy[0])) + self.OBSTACLE_CLEAR_RADIUS
+        x_hi = max(float(start_xy[0]), float(goal_xy[0])) - self.OBSTACLE_CLEAR_RADIUS
+        if x_hi <= x_lo:  # degenerate; fall back to the full arena width
+            x_lo, x_hi = xl + wall, xh - wall
+        y_lo, y_hi = yl + wall, yh - wall
 
         def _ok(x, y, radius):
             q = np.array([x, y], dtype=np.float32)
@@ -253,39 +312,74 @@ class NavigationAviary(BaseRLAviary):
                 return False
             if np.linalg.norm(q - goal_xy) < self.OBSTACLE_CLEAR_RADIUS + radius:
                 return False
-            for (ox, oy, orad) in self._obstacle_specs:
+            for (ox, oy, orad) in specs:
                 if np.linalg.norm(q - np.array([ox, oy], dtype=np.float32)) < (
                         self.OBSTACLE_MIN_SEPARATION + radius + orad):
                     return False
             return True
 
         max_tries = 200
-        # 1) Corridor obstacles: along the start->goal segment with a small
-        #    lateral offset so a gap remains to fly around them.
-        n_corridor = min(self.N_CORRIDOR_OBSTACLES, self.N_OBSTACLES)
-        for _ in range(n_corridor):
-            for _try in range(max_tries):
-                t = self.np_random.uniform(0.25, 0.75)
-                off = self.np_random.uniform(-self.CORRIDOR_HALF_WIDTH,
-                                             self.CORRIDOR_HALF_WIDTH)
-                radius = float(self.np_random.uniform(rlo, rhi))
-                c = start_xy + t * seg + off * perp
-                if _ok(float(c[0]), float(c[1]), radius):
-                    self._obstacle_specs.append((float(c[0]), float(c[1]), radius))
-                    break
-        # 2) Scatter the remaining obstacles anywhere in the arena.
-        while len(self._obstacle_specs) < self.N_OBSTACLES:
+        while len(specs) < self.N_OBSTACLES:
             placed = False
             for _try in range(max_tries):
-                x = float(self.np_random.uniform(xl, xh))
-                y = float(self.np_random.uniform(yl, yh))
+                x = float(self.np_random.uniform(x_lo, x_hi))
+                y = float(self.np_random.uniform(y_lo, y_hi))
                 radius = float(self.np_random.uniform(rlo, rhi))
                 if _ok(x, y, radius):
-                    self._obstacle_specs.append((x, y, radius))
+                    specs.append((x, y, radius))
                     placed = True
                     break
             if not placed:
                 break  # arena too crowded; stop trying
+        return specs
+
+    def _path_exists(self, start_xy, goal_xy, specs):
+        """Return True iff a start->goal path exists around ``specs``.
+
+        Builds an occupancy grid over the arena, marks cells within
+        ``radius + PATH_CLEARANCE`` of any pillar as blocked (the clearance
+        accounts for the drone's own footprint plus a safety margin), and runs
+        an 8-connected BFS. An empty layout is trivially feasible.
+        """
+        if not specs:
+            return True
+        (xl, xh), (yl, yh), _ = self.BOUNDS
+        cell = self.PATH_CELL_SIZE
+        nx = max(1, int(np.ceil((xh - xl) / cell)))
+        ny = max(1, int(np.ceil((yh - yl) / cell)))
+        xs = xl + (np.arange(nx) + 0.5) * cell
+        ys = yl + (np.arange(ny) + 0.5) * cell
+        XX, YY = np.meshgrid(xs, ys, indexing="ij")
+        blocked = np.zeros((nx, ny), dtype=bool)
+        for (ox, oy, r) in specs:
+            rr = (r + self.PATH_CLEARANCE) ** 2
+            blocked |= (XX - ox) ** 2 + (YY - oy) ** 2 <= rr
+
+        def _to_cell(pt):
+            i = int(np.clip((pt[0] - xl) / cell, 0, nx - 1))
+            j = int(np.clip((pt[1] - yl) / cell, 0, ny - 1))
+            return i, j
+
+        si, sj = _to_cell(start_xy)
+        gi, gj = _to_cell(goal_xy)
+        if blocked[si, sj] or blocked[gi, gj]:
+            return False
+        visited = np.zeros((nx, ny), dtype=bool)
+        visited[si, sj] = True
+        queue = deque([(si, sj)])
+        neigh = ((-1, 0), (1, 0), (0, -1), (0, 1),
+                 (-1, -1), (-1, 1), (1, -1), (1, 1))
+        while queue:
+            i, j = queue.popleft()
+            if i == gi and j == gj:
+                return True
+            for di, dj in neigh:
+                ni, nj = i + di, j + dj
+                if (0 <= ni < nx and 0 <= nj < ny
+                        and not visited[ni, nj] and not blocked[ni, nj]):
+                    visited[ni, nj] = True
+                    queue.append((ni, nj))
+        return False
 
     ################################################################################
 
@@ -293,6 +387,13 @@ class NavigationAviary(BaseRLAviary):
         # Sample the new task BEFORE BaseAviary rebuilds the simulation, so the
         # drone spawns at the (possibly randomized) start pose. Accessing
         # `self.np_random` lazily initializes the RNG on the first episode.
+        #
+        # In eval mode we FORCE the fixed per-env seed on every reset, so the
+        # RNG is re-seeded identically each episode and the whole task
+        # (start / goal / obstacles) is reproduced exactly -> a stable, directly
+        # comparable evaluation set across eval cycles.
+        if self.EVAL_MODE:
+            seed = self.EVAL_SEED
         if seed is not None:
             super().reset(seed=seed)
         self._resample_task()
