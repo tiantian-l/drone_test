@@ -137,18 +137,31 @@ class NavigationAviary(BaseRLAviary):
         # Reward weights (override individually via reward_cfg dict) -----------
         self.RW = {
             #"progress": 1.0,     # reward per meter of distance reduction toward goal
-            "progress": 5.0,
-            "goal_bonus": 10.0,  # one-off reward when goal is reached
+            # "progress": 5.0,
+            # "goal_bonus": 10.0,  # one-off reward when goal is reached
            # "time_penalty": 0.0,    # constant per-step penalty (encourages speed)
-            "time_penalty": 0.01, 
-            "crash_penalty": 10.0,  # penalty on termination by crash / out-of-bounds
-            "collision_penalty": 10.0,  # one-off penalty when hitting an obstacle
-            "obstacle_proximity": 0.5,  # per-step penalty inside the safety margin
-            "safety_margin": 0.30,      # distance (m) where proximity penalty starts
-            "action_smooth": 0.0,   # penalty on change of action between steps
-            "tilt_penalty": 0.0,    # penalty proportional to roll/pitch magnitude
-            "alive": 0.0,           # constant per-step survival reward
+            # "time_penalty": 0.01, 
+            # "crash_penalty": 10.0,  # penalty on termination by crash / out-of-bounds
+            # "collision_penalty": 10.0,  # one-off penalty when hitting an obstacle
+            # "obstacle_proximity": 0.5,  # per-step penalty inside the safety margin
+            # "safety_margin": 0.30,      # distance (m) where proximity penalty starts
+            # "action_smooth": 0.0,   # penalty on change of action between steps
+            # "tilt_penalty": 0.0,    # penalty proportional to roll/pitch magnitude
+            # "alive": 0.0,           # constant per-step survival reward
+            
+            "progress": 8.0,
+            "goal_bonus": 30.0,
+            "time_penalty": 0.02,
+            "timeout_penalty": 10.0,
+            "crash_penalty": 10.0,
+            "collision_penalty": 10.0,
+            "obstacle_proximity": 0.2,
+            "safety_margin": 0.25,
+            "action_smooth": 0.0,
+            "tilt_penalty": 0.0,
+            "alive": 0.0,
         }
+        
    
         if reward_cfg:
             self.RW.update(reward_cfg)
@@ -394,6 +407,7 @@ class NavigationAviary(BaseRLAviary):
             "crash_penalty": 0.0,
             "obstacle_proximity": 0.0,
             "collision_penalty": 0.0,
+            "timeout_penalty": 0.0,
         }
 
         # 1) Potential-based progress shaping: positive when getting closer.
@@ -402,6 +416,7 @@ class NavigationAviary(BaseRLAviary):
         progress = self._prev_dist - dist
         terms["progress"] = self.RW["progress"] * progress
         self._prev_dist = dist
+        
 
         # 2) Constant terms.
         terms["alive"] = self.RW["alive"]
@@ -440,6 +455,12 @@ class NavigationAviary(BaseRLAviary):
         # 8) Obstacle collision penalty (mirrors _computeTerminated).
         if self._is_collision():
             terms["collision_penalty"] = -self.RW["collision_penalty"]
+            
+        # 9) Timeout penalty (mirrors _computeTruncated).
+        if self._is_timeout() and not (
+            dist < self.GOAL_TOLERANCE or self._is_crash(s) or self._is_collision()
+        ):
+            terms["timeout_penalty"] = -self.RW["timeout_penalty"]
 
         self._reward_terms = terms
         return float(sum(terms.values()))
