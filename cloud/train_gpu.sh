@@ -19,7 +19,7 @@ python dreamerv3/main.py \
   --logdir "${LOGDIR}" \
   --jax.platform cuda \
   --run.envs 8 \
-  --run.train_ratio 1024 \
+  --run.train_ratio 512 \
   --logger.outputs 'jsonl,scope,tensorboard' \
   --env.drone.log_image True \
   "$@"
