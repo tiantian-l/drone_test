@@ -117,11 +117,6 @@ class NavigationAviary(BaseRLAviary):
                  log_video: bool = False,
                  render_mode: str = "3d",
                  video_size=(512, 512),
-                 video_camera: str = "follow",
-                 video_camera_distance: float = 5.5,
-                 video_camera_yaw: float = 45.0,
-                 video_camera_pitch: float = -50.0,
-                 video_camera_fov: float = 55.0,
                  trail_length: int = 80,
                  trail_markers: int = 30,
                  # ---- reward weights ---------------------------------------
@@ -187,22 +182,12 @@ class NavigationAviary(BaseRLAviary):
                          dtype=np.float32))
 
         # Visualization (third-person RGB frames for DreamerV3 log/image) -----
-        # render_mode == "3d" -> PyBullet camera (GPU OpenGL on a Tesla T4 via
-        # the EGL plugin, CPU TinyRenderer otherwise);
+        # render_mode == "3d" -> photorealistic PyBullet camera (GPU OpenGL on
+        # a Tesla T4 via the EGL plugin, CPU TinyRenderer otherwise);
         # render_mode == "2d" -> the lightweight top-down numpy schematic.
-        # video_camera controls 3D framing:
-        #   follow     -> fixed yaw/pitch/distance tracking the drone (stable)
-        #   overview   -> fixed view of the whole map
-        #   frame_goal -> fixed yaw/pitch, dynamic distance to include goal
-        #   orbit      -> legacy orbiting camera
         self.LOG_VIDEO = bool(log_video)
         self.RENDER_MODE = str(render_mode)
         self.VIDEO_SIZE = (int(video_size[0]), int(video_size[1]))  # (H, W)
-        self.VIDEO_CAMERA = str(video_camera)
-        self.VIDEO_CAMERA_DISTANCE = float(video_camera_distance)
-        self.VIDEO_CAMERA_YAW = float(video_camera_yaw)
-        self.VIDEO_CAMERA_PITCH = float(video_camera_pitch)
-        self.VIDEO_CAMERA_FOV = float(video_camera_fov)
         self.TRAIL_LENGTH = int(trail_length)
         self.TRAIL_MARKERS = int(trail_markers)
         self._trail = deque(maxlen=self.TRAIL_LENGTH)
@@ -210,7 +195,7 @@ class NavigationAviary(BaseRLAviary):
         self._drone_marker_id = None  # cyan highlight so the tiny drone shows
         self._egl_plugin = None
         self._pyb_renderer = None    # chosen in _setup_offscreen_renderer
-        self._cam_yaw = self.VIDEO_CAMERA_YAW
+        self._cam_yaw = 45.0         # slowly orbits for better depth cues
 
         self._fixed_goal = None if goal_pos is None else np.array(goal_pos, dtype=np.float32)
         self._fixed_start = None if start_pos is None else np.array(start_pos, dtype=np.float32)
@@ -239,7 +224,7 @@ class NavigationAviary(BaseRLAviary):
             "obstacle_proximity": 0.2,
             "safety_margin": 0.5,
             "action_smooth": 0.0,
-            "tilt_penalty": 0.1,
+            "tilt_penalty": 0.0,
             "alive": 0.0,
         }
         
@@ -919,36 +904,8 @@ class NavigationAviary(BaseRLAviary):
         except Exception:
             pass
 
-    def _video_camera_target_distance_yaw(self, drone_pos, goal):
-        """Return stable camera framing parameters for the video logger."""
-        mode = self.VIDEO_CAMERA.lower()
-        if mode == "overview":
-            center = np.array([0.0, 0.0, 1.4], dtype=np.float32)
-            (xl, xh), (yl, yh), _ = self.BOUNDS
-            span = max(float(xh - xl), float(yh - yl))
-            distance = max(self.VIDEO_CAMERA_DISTANCE, 0.72 * span)
-            yaw = self.VIDEO_CAMERA_YAW
-        elif mode == "frame_goal":
-            center = 0.5 * (drone_pos + goal)
-            sep = float(np.linalg.norm(drone_pos - goal))
-            distance = float(np.clip(self.VIDEO_CAMERA_DISTANCE + 0.9 * sep,
-                                     self.VIDEO_CAMERA_DISTANCE, 12.0))
-            yaw = self.VIDEO_CAMERA_YAW
-        elif mode == "orbit":
-            center = 0.5 * (drone_pos + goal)
-            sep = float(np.linalg.norm(drone_pos - goal))
-            distance = float(np.clip(self.VIDEO_CAMERA_DISTANCE + 0.9 * sep,
-                                     self.VIDEO_CAMERA_DISTANCE, 12.0))
-            self._cam_yaw = (self._cam_yaw + 0.35) % 360.0
-            yaw = self._cam_yaw
-        else:
-            center = drone_pos + np.array([0.0, 0.0, 0.35], dtype=np.float32)
-            distance = self.VIDEO_CAMERA_DISTANCE
-            yaw = self.VIDEO_CAMERA_YAW
-        return center.tolist(), float(distance), float(yaw)
-
     def _render_camera_3d(self):
-        """Render a stable 3D perspective view for the video log."""
+        """Render a tracking 3D perspective view of the drone and goal."""
         h, w = self.VIDEO_SIZE
         s = self._getDroneStateVector(0)
         drone_pos = s[0:3]
@@ -958,16 +915,22 @@ class NavigationAviary(BaseRLAviary):
         self._update_trail_markers()
         self._update_drone_marker(drone_pos)
 
-        target, distance, yaw = self._video_camera_target_distance_yaw(
-            drone_pos, goal)
+        # Frame both the drone and the goal: look at their midpoint and back
+        # the camera off proportionally to their separation. A moderately
+        # high (but not fully top-down) pitch keeps the (semi-transparent) 3 m
+        # obstacle pillars from occluding the drone while preserving enough of
+        # an oblique angle for a clear, readable 3D view.
+        target = (0.5 * (drone_pos + goal)).tolist()
+        sep = float(np.linalg.norm(drone_pos - goal))
+        distance = float(np.clip(2.4 + 0.9 * sep, 3.0, 9.0))
+        self._cam_yaw = (self._cam_yaw + 0.35) % 360.0
 
         view = p.computeViewMatrixFromYawPitchRoll(
             cameraTargetPosition=target, distance=distance,
-            yaw=yaw, pitch=self.VIDEO_CAMERA_PITCH, roll=0.0, upAxisIndex=2,
+            yaw=self._cam_yaw, pitch=-50.0, roll=0.0, upAxisIndex=2,
             physicsClientId=self.CLIENT)
         proj = p.computeProjectionMatrixFOV(
-            fov=self.VIDEO_CAMERA_FOV, aspect=float(w) / float(h),
-            nearVal=0.05, farVal=100.0,
+            fov=60.0, aspect=float(w) / float(h), nearVal=0.05, farVal=100.0,
             physicsClientId=self.CLIENT)
         _, _, rgb, _, _ = p.getCameraImage(
             width=w, height=h, viewMatrix=view, projectionMatrix=proj,
@@ -1101,3 +1064,4 @@ class NavigationAviary(BaseRLAviary):
         image[h - 8 - bar_h:h - 8, w - 8:w - 4, :] = np.array([60, 180, 90], dtype=np.uint8)
 
         return image
+
