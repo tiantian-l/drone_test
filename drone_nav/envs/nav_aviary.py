@@ -192,7 +192,9 @@ class NavigationAviary(BaseRLAviary):
         self.TRAIL_MARKERS = int(trail_markers)
         self._trail = deque(maxlen=self.TRAIL_LENGTH)
         self._trail_bodies = []      # visual-only spheres marking the path
-        self._drone_marker_id = None  # cyan highlight so the tiny drone shows
+        self._drone_marker_id = None  # subtle halo so the tiny drone shows
+        self._heading_marker_id = None  # visual-only yaw direction shaft
+        self._heading_tip_id = None     # visual-only yaw direction tip
         self._egl_plugin = None
         self._pyb_renderer = None    # chosen in _setup_offscreen_renderer
         self._cam_yaw = 45.0         # slowly orbits for better depth cues
@@ -464,6 +466,8 @@ class NavigationAviary(BaseRLAviary):
         # lazily recreated on the next render.
         self._trail_bodies = []
         self._drone_marker_id = None
+        self._heading_marker_id = None
+        self._heading_tip_id = None
         # `_addObstacles` (run inside super().reset() housekeeping) already
         # rebuilt `self._obstacle_ids`; only the per-step cache needs clearing.
         self._clearance_cache = (-1, np.inf)
@@ -855,16 +859,21 @@ class NavigationAviary(BaseRLAviary):
 
 
     def _update_trail_markers(self):
-        """Place small visual-only spheres along the recent flight path."""
+        """Place fading visual-only spheres along the recent flight path."""
         try:
             n = self.TRAIL_MARKERS
             if n <= 0:
                 return
             if not self._trail_bodies:
-                for _ in range(n):
+                for i in range(n):
+                    # Older points are small and faint; recent points are more
+                    # visible, so the motion direction is readable at a glance.
+                    t = 0.0 if n <= 1 else i / float(n - 1)
+                    radius = 0.010 + 0.014 * t
+                    alpha = 0.15 + 0.55 * t
                     vis = p.createVisualShape(
-                        p.GEOM_SPHERE, radius=0.022,
-                        rgbaColor=[0.20, 0.55, 1.0, 0.9],
+                        p.GEOM_SPHERE, radius=radius,
+                        rgbaColor=[0.18, 0.55, 1.0, alpha],
                         physicsClientId=self.CLIENT)
                     bid = p.createMultiBody(
                         baseMass=0, baseCollisionShapeIndex=-1,
@@ -884,22 +893,64 @@ class NavigationAviary(BaseRLAviary):
         except Exception:
             pass
 
-    def _update_drone_marker(self, drone_pos):
-        """Place a cyan highlight sphere on the drone so it is easy to spot."""
+    def _update_drone_marker(self, drone_pos, yaw):
+        """Place a subtle halo and heading cue on the drone."""
         try:
+            pos = np.asarray(drone_pos, dtype=np.float32)
             if self._drone_marker_id is None:
                 vis = p.createVisualShape(
-                    p.GEOM_SPHERE, radius=0.06,
-                    rgbaColor=[0.10, 0.85, 0.95, 0.85],
+                    p.GEOM_SPHERE, radius=0.032,
+                    rgbaColor=[0.10, 0.85, 0.95, 0.45],
                     physicsClientId=self.CLIENT)
                 self._drone_marker_id = p.createMultiBody(
                     baseMass=0, baseCollisionShapeIndex=-1,
                     baseVisualShapeIndex=vis,
-                    basePosition=drone_pos.tolist(),
+                    basePosition=(pos + [0.0, 0.0, 0.035]).tolist(),
                     physicsClientId=self.CLIENT)
             else:
                 p.resetBasePositionAndOrientation(
-                    self._drone_marker_id, drone_pos.tolist(), [0, 0, 0, 1],
+                    self._drone_marker_id,
+                    (pos + [0.0, 0.0, 0.035]).tolist(), [0, 0, 0, 1],
+                    physicsClientId=self.CLIENT)
+            self._update_heading_marker(pos, float(yaw))
+        except Exception:
+            pass
+
+    def _update_heading_marker(self, drone_pos, yaw):
+        """Draw a short visual-only marker in front of the drone nose."""
+        direction = np.array([np.cos(yaw), np.sin(yaw), 0.0], dtype=np.float32)
+        zoff = np.array([0.0, 0.0, 0.08], dtype=np.float32)
+        shaft_len = 0.26
+        quat = p.getQuaternionFromEuler([0.0, 0.0, yaw])
+        shaft_pos = drone_pos + zoff + direction * (0.5 * shaft_len)
+        tip_pos = drone_pos + zoff + direction * shaft_len
+        try:
+            if self._heading_marker_id is None:
+                shaft_vis = p.createVisualShape(
+                    p.GEOM_BOX, halfExtents=[0.5 * shaft_len, 0.010, 0.010],
+                    rgbaColor=[0.95, 1.0, 1.0, 0.80],
+                    physicsClientId=self.CLIENT)
+                self._heading_marker_id = p.createMultiBody(
+                    baseMass=0, baseCollisionShapeIndex=-1,
+                    baseVisualShapeIndex=shaft_vis,
+                    basePosition=shaft_pos.tolist(),
+                    baseOrientation=quat,
+                    physicsClientId=self.CLIENT)
+                tip_vis = p.createVisualShape(
+                    p.GEOM_SPHERE, radius=0.026,
+                    rgbaColor=[1.0, 0.95, 0.25, 0.90],
+                    physicsClientId=self.CLIENT)
+                self._heading_tip_id = p.createMultiBody(
+                    baseMass=0, baseCollisionShapeIndex=-1,
+                    baseVisualShapeIndex=tip_vis,
+                    basePosition=tip_pos.tolist(),
+                    physicsClientId=self.CLIENT)
+            else:
+                p.resetBasePositionAndOrientation(
+                    self._heading_marker_id, shaft_pos.tolist(), quat,
+                    physicsClientId=self.CLIENT)
+                p.resetBasePositionAndOrientation(
+                    self._heading_tip_id, tip_pos.tolist(), [0, 0, 0, 1],
                     physicsClientId=self.CLIENT)
         except Exception:
             pass
@@ -913,7 +964,7 @@ class NavigationAviary(BaseRLAviary):
         if len(self._trail) == 0 or np.linalg.norm(self._trail[-1] - drone_pos) > 1e-3:
             self._trail.append(drone_pos.copy())
         self._update_trail_markers()
-        self._update_drone_marker(drone_pos)
+        self._update_drone_marker(drone_pos, s[9])
 
         # Frame both the drone and the goal: look at their midpoint and back
         # the camera off proportionally to their separation. A moderately
@@ -1064,4 +1115,3 @@ class NavigationAviary(BaseRLAviary):
         image[h - 8 - bar_h:h - 8, w - 8:w - 4, :] = np.array([60, 180, 90], dtype=np.uint8)
 
         return image
-
