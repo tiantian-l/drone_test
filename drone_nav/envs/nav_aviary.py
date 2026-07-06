@@ -197,7 +197,15 @@ class NavigationAviary(BaseRLAviary):
         self._heading_tip_id = None     # visual-only yaw direction tip
         self._egl_plugin = None
         self._pyb_renderer = None    # chosen in _setup_offscreen_renderer
-        self._cam_yaw = 45.0         # slowly orbits for better depth cues
+        # Fixed whole-arena camera: framing (target/yaw/pitch/distance) is
+        # computed once from the map bounds so both the viewpoint and the zoom
+        # stay constant across every frame and episode. Cached on first use.
+        self._cam_matrices = None
+        # Marker sizes scale with the arena so the drone / goal / trail stay
+        # readable when the whole (large) map is framed at once.
+        (_xl, _xh), (_yl, _yh), _ = self.BOUNDS
+        self._map_span = float(max(_xh - _xl, _yh - _yl))
+        self._marker_scale = max(1.0, self._map_span / 5.0)
 
         self._fixed_goal = None if goal_pos is None else np.array(goal_pos, dtype=np.float32)
         self._fixed_start = None if start_pos is None else np.array(start_pos, dtype=np.float32)
@@ -742,7 +750,8 @@ class NavigationAviary(BaseRLAviary):
         super()._addObstacles()
         try:
             vis = p.createVisualShape(
-                p.GEOM_SPHERE, radius=0.08, rgbaColor=[1.0, 0.1, 0.1, 1.0],
+                p.GEOM_SPHERE, radius=0.08 * self._marker_scale,
+                rgbaColor=[1.0, 0.1, 0.1, 1.0],
                 physicsClientId=self.CLIENT)
             self._goal_marker_id = p.createMultiBody(
                 baseMass=0,
@@ -869,8 +878,8 @@ class NavigationAviary(BaseRLAviary):
                     # Older points are small and faint; recent points are more
                     # visible, so the motion direction is readable at a glance.
                     t = 0.0 if n <= 1 else i / float(n - 1)
-                    radius = 0.010 + 0.014 * t
-                    alpha = 0.15 + 0.55 * t
+                    radius = (0.014 + 0.020 * t) * self._marker_scale
+                    alpha = 0.20 + 0.60 * t
                     vis = p.createVisualShape(
                         p.GEOM_SPHERE, radius=radius,
                         rgbaColor=[0.18, 0.55, 1.0, alpha],
@@ -897,10 +906,11 @@ class NavigationAviary(BaseRLAviary):
         """Place a subtle halo and heading cue on the drone."""
         try:
             pos = np.asarray(drone_pos, dtype=np.float32)
+            sc = self._marker_scale
             if self._drone_marker_id is None:
                 vis = p.createVisualShape(
-                    p.GEOM_SPHERE, radius=0.032,
-                    rgbaColor=[0.10, 0.85, 0.95, 0.45],
+                    p.GEOM_SPHERE, radius=0.055 * sc,
+                    rgbaColor=[0.10, 0.90, 1.0, 0.75],
                     physicsClientId=self.CLIENT)
                 self._drone_marker_id = p.createMultiBody(
                     baseMass=0, baseCollisionShapeIndex=-1,
@@ -918,17 +928,18 @@ class NavigationAviary(BaseRLAviary):
 
     def _update_heading_marker(self, drone_pos, yaw):
         """Draw a short visual-only marker in front of the drone nose."""
+        sc = self._marker_scale
         direction = np.array([np.cos(yaw), np.sin(yaw), 0.0], dtype=np.float32)
-        zoff = np.array([0.0, 0.0, 0.08], dtype=np.float32)
-        shaft_len = 0.26
+        zoff = np.array([0.0, 0.0, 0.08 * sc], dtype=np.float32)
+        shaft_len = 0.26 * sc
         quat = p.getQuaternionFromEuler([0.0, 0.0, yaw])
         shaft_pos = drone_pos + zoff + direction * (0.5 * shaft_len)
         tip_pos = drone_pos + zoff + direction * shaft_len
         try:
             if self._heading_marker_id is None:
                 shaft_vis = p.createVisualShape(
-                    p.GEOM_BOX, halfExtents=[0.5 * shaft_len, 0.010, 0.010],
-                    rgbaColor=[0.95, 1.0, 1.0, 0.80],
+                    p.GEOM_BOX, halfExtents=[0.5 * shaft_len, 0.010 * sc, 0.010 * sc],
+                    rgbaColor=[0.95, 1.0, 1.0, 0.85],
                     physicsClientId=self.CLIENT)
                 self._heading_marker_id = p.createMultiBody(
                     baseMass=0, baseCollisionShapeIndex=-1,
@@ -937,7 +948,7 @@ class NavigationAviary(BaseRLAviary):
                     baseOrientation=quat,
                     physicsClientId=self.CLIENT)
                 tip_vis = p.createVisualShape(
-                    p.GEOM_SPHERE, radius=0.026,
+                    p.GEOM_SPHERE, radius=0.026 * sc,
                     rgbaColor=[1.0, 0.95, 0.25, 0.90],
                     physicsClientId=self.CLIENT)
                 self._heading_tip_id = p.createMultiBody(
@@ -955,34 +966,63 @@ class NavigationAviary(BaseRLAviary):
         except Exception:
             pass
 
+    def _fixed_camera_matrices(self):
+        """Compute (and cache) the fixed whole-arena view/projection matrices.
+
+        The distance is derived from the arena's bounding sphere so the entire
+        map fits inside the field of view regardless of the drone position.
+        Because it depends only on the (static) map bounds and video size, the
+        result is cached and the camera never orbits, pans or zooms — giving a
+        stable, constant-scale view across every frame and every episode.
+        """
+        if self._cam_matrices is not None:
+            return self._cam_matrices
+
+        h, w = self.VIDEO_SIZE
+        (xl, xh), (yl, yh), (zl, zh) = self.BOUNDS
+        aspect = float(w) / float(h)
+        fov = 50.0                      # vertical FOV (deg); lower = flatter
+        cam_yaw = 0.0                   # map-aligned: +x right, +y up in frame
+        cam_pitch = -75.0               # near top-down, slight tilt for depth
+
+        # Bounding sphere of the arena (including pillar height) guarantees a
+        # fit for any aspect/orientation; centre it and back the camera off so
+        # the sphere subtends the smaller of the horizontal / vertical FOV.
+        cx, cy, cz = 0.5 * (xl + xh), 0.5 * (yl + yh), 0.5 * (zl + zh)
+        radius = 0.5 * float(np.sqrt((xh - xl) ** 2 + (yh - yl) ** 2 + (zh - zl) ** 2))
+        half_v = np.radians(fov * 0.5)
+        half_h = np.arctan(aspect * np.tan(half_v))
+        half_min = min(half_v, half_h)
+        distance = float(radius / max(np.sin(half_min), 1e-3) * 1.06)
+
+        view = p.computeViewMatrixFromYawPitchRoll(
+            cameraTargetPosition=[cx, cy, cz], distance=distance,
+            yaw=cam_yaw, pitch=cam_pitch, roll=0.0, upAxisIndex=2,
+            physicsClientId=self.CLIENT)
+        proj = p.computeProjectionMatrixFOV(
+            fov=fov, aspect=aspect, nearVal=0.1,
+            farVal=distance + radius + 10.0,
+            physicsClientId=self.CLIENT)
+        self._cam_matrices = (view, proj)
+        return self._cam_matrices
+
     def _render_camera_3d(self):
-        """Render a tracking 3D perspective view of the drone and goal."""
+        """Render the fixed whole-arena 3D view of the navigation.
+
+        The camera framing is constant (see ``_fixed_camera_matrices``); only
+        the drone, its heading and the flight trail move inside the frame, so
+        the whole map — start, goal, obstacles and path — is always visible at
+        a stable scale, which stays readable as the arena grows.
+        """
         h, w = self.VIDEO_SIZE
         s = self._getDroneStateVector(0)
         drone_pos = s[0:3]
-        goal = self.TARGET_POS
         if len(self._trail) == 0 or np.linalg.norm(self._trail[-1] - drone_pos) > 1e-3:
             self._trail.append(drone_pos.copy())
         self._update_trail_markers()
         self._update_drone_marker(drone_pos, s[9])
 
-        # Frame both the drone and the goal: look at their midpoint and back
-        # the camera off proportionally to their separation. A moderately
-        # high (but not fully top-down) pitch keeps the (semi-transparent) 3 m
-        # obstacle pillars from occluding the drone while preserving enough of
-        # an oblique angle for a clear, readable 3D view.
-        target = (0.5 * (drone_pos + goal)).tolist()
-        sep = float(np.linalg.norm(drone_pos - goal))
-        distance = float(np.clip(2.4 + 0.9 * sep, 3.0, 9.0))
-        self._cam_yaw = (self._cam_yaw + 0.35) % 360.0
-
-        view = p.computeViewMatrixFromYawPitchRoll(
-            cameraTargetPosition=target, distance=distance,
-            yaw=self._cam_yaw, pitch=-50.0, roll=0.0, upAxisIndex=2,
-            physicsClientId=self.CLIENT)
-        proj = p.computeProjectionMatrixFOV(
-            fov=60.0, aspect=float(w) / float(h), nearVal=0.05, farVal=100.0,
-            physicsClientId=self.CLIENT)
+        view, proj = self._fixed_camera_matrices()
         _, _, rgb, _, _ = p.getCameraImage(
             width=w, height=h, viewMatrix=view, projectionMatrix=proj,
             renderer=self._pyb_renderer,
@@ -996,13 +1036,19 @@ class NavigationAviary(BaseRLAviary):
     def _world_to_pixel(self, x, y):
         (xl, xh), (yl, yh), _ = self.BOUNDS
         h, w = self.VIDEO_SIZE
-        pad = 0.08
+        pad = 0.06
         span_x = max(xh - xl, 1e-6)
         span_y = max(yh - yl, 1e-6)
-        nx = (x - xl) / span_x
-        ny = (y - yl) / span_y
-        px = int(np.clip((pad + (1.0 - 2.0 * pad) * nx) * (w - 1), 0, w - 1))
-        py = int(np.clip((pad + (1.0 - 2.0 * pad) * (1.0 - ny)) * (h - 1), 0, h - 1))
+        # Single isotropic scale (px per metre) so the arena keeps its true
+        # aspect ratio instead of being stretched into the square frame, then
+        # centre it inside the padded drawing area.
+        avail_w = (1.0 - 2.0 * pad) * (w - 1)
+        avail_h = (1.0 - 2.0 * pad) * (h - 1)
+        scale = min(avail_w / span_x, avail_h / span_y)
+        off_x = 0.5 * ((w - 1) - scale * span_x)
+        off_y = 0.5 * ((h - 1) - scale * span_y)
+        px = int(np.clip(off_x + (x - xl) * scale, 0, w - 1))
+        py = int(np.clip(off_y + (yh - y) * scale, 0, h - 1))
         return px, py
 
     def _draw_disc(self, image, cx, cy, radius, color):
