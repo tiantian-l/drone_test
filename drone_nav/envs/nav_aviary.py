@@ -56,10 +56,11 @@ class NavigationAviary(BaseRLAviary):
                  # 20m x 20m arena (map half-range = [10, 10, 4.5]). Obstacles
                  # fill the +/-10 field; the start is sampled ~2m beyond the
                  # field on the LEFT (x ~ -12), the goal ~2m beyond on the
-                 # RIGHT (x ~ +12), both randomized along y so every episode is
-                 # a different ~24m crossing of the obstacle forest.
-                 goal_sample_range=((11.7, 12.0), (-9.0, 9.0), (0.6, 3.5)),
-                 start_sample_range=((-12.0, -11.7), (-9.0, 9.0), (0.8, 1.5)),
+                 # RIGHT (x ~ +12). Y is sampled inside the obstacle field
+                 # rather than near the +/-10 map edge, reducing the chance
+                 # that the agent learns a trivial boundary-hugging route.
+                 goal_sample_range=((11.7, 12.0), (-7.5, 7.5), (0.6, 3.5)),
+                 start_sample_range=((-12.0, -11.7), (-7.5, 7.5), (0.8, 1.5)),
                  goal_tolerance: float = 0.5,
                  # A ~24 m crossing at a 2.0 m/s velocity cap needs ~12 s in a
                  # straight line; 1200 control steps (= 40 s at ctrl_freq 30)
@@ -68,7 +69,7 @@ class NavigationAviary(BaseRLAviary):
                  # Flight limits (out-of-bounds crash volume). Slightly larger
                  # than the +/-12 start/goal band on x so spawning at the edge
                  # is not an instant crash; z ceiling = map height (4.5 m).
-                 bounds=((-12.5, 12.5), (-10.5, 10.5), (0.05, 4.5)),
+                 bounds=((-12.5, 12.5), (-10.0, 10.0), (0.05, 4.5)),
                  # Obstacle placement field half-range [x, y, z_ceiling].
                  map_range=(10.0, 10.0, 4.5),
                  include_angular_velocity: bool = False,
@@ -105,6 +106,7 @@ class NavigationAviary(BaseRLAviary):
                  # the goal is always reachable.
                  path_clearance: float = 0.35,
                  path_cell_size: float = 0.25,
+                 path_bounds_y=(-9.8, 9.8),
                  obstacle_layout_tries: int = 40,
                  # ---- lidar (3D multi-layer range scan) --------------------
                  lidar_enabled: bool = True,
@@ -152,6 +154,7 @@ class NavigationAviary(BaseRLAviary):
         # Feasibility-check knobs (grid BFS over an inflated occupancy map).
         self.PATH_CLEARANCE = float(path_clearance)
         self.PATH_CELL_SIZE = float(path_cell_size)
+        self.PATH_BOUNDS_Y = (float(path_bounds_y[0]), float(path_bounds_y[1]))
         self.OBSTACLE_LAYOUT_TRIES = int(obstacle_layout_tries)
         self._obstacle_specs = []     # (x, y, wx, wy, h) boxes for this episode
         self._obstacle_ids = []       # PyBullet body ids (rebuilt each reset)
@@ -397,14 +400,19 @@ class NavigationAviary(BaseRLAviary):
     def _path_exists(self, start_xy, goal_xy, specs):
         """Return True iff a start->goal path exists around ``specs``.
 
-        Builds an occupancy grid over the flight bounds, marks cells within
-        ``half_width + PATH_CLEARANCE`` of any box footprint as blocked (the
-        clearance accounts for the drone's own footprint plus a safety margin),
-        and runs an 8-connected BFS. An empty layout is trivially feasible.
+        Builds an occupancy grid over the flight bounds, with Y clipped to
+        ``PATH_BOUNDS_Y`` so boundary-hugging routes are not counted as valid.
+        It marks cells within ``half_width + PATH_CLEARANCE`` of any box
+        footprint as blocked and runs an 8-connected BFS.
         """
         if not specs:
             return True
         (xl, xh), (yl, yh), _ = self.BOUNDS
+        pyl, pyh = self.PATH_BOUNDS_Y
+        yl = max(float(yl), pyl)
+        yh = min(float(yh), pyh)
+        if yl >= yh:
+            return False
         cell = self.PATH_CELL_SIZE
         nx = max(1, int(np.ceil((xh - xl) / cell)))
         ny = max(1, int(np.ceil((yh - yl) / cell)))
