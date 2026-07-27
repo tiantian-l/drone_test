@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Feasibility runs for experiments C then D, one independent training seed.
+# School Conda runs for experiments C then D, one independent training seed.
 # D receives the full five-million-step ceiling; runs resume from their own
 # checkpoints when the same log directory is reused.
 script_dir="$(cd "$(dirname "$0")" && pwd)"

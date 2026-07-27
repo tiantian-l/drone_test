@@ -67,7 +67,9 @@ def mean_std(values):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("log_root", nargs="?", default="logs/ablation")
+    parser.add_argument(
+        "log_root", nargs="?",
+        default=str(Path.home() / "logdir" / "drone_ablation"))
     parser.add_argument("--threshold", type=float, default=0.8)
     parser.add_argument("--output", default=None,
                         help="CSV path (default: LOG_ROOT/summary.csv)")

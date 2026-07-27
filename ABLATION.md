@@ -24,62 +24,74 @@ formal result.
 
 ## Running
 
-From the repository root, with the GPU environment activated:
+On each school computer, install the environment once from the repository root:
 
 ```bash
-bash scripts/run_ablation.sh
+bash cloud/setup_school.sh
+```
+
+The training scripts then load Conda and activate the `drone` environment
+automatically, just like `cloud/train_school.sh`; manual `conda activate` is not
+required. The defaults are `$HOME/miniconda3` and environment name `drone`.
+Override them with `CONDA_ROOT` and `ENV_NAME` if necessary.
+
+The general A–D launcher is:
+
+```bash
+bash cloud/run_ablation.sh
 ```
 
 For the two-computer, single-seed feasibility study, use the dedicated scripts:
 
 ```bash
 # Computer 1: A (0.5M steps), then B (1M steps).
-bash scripts/run_ablation_ab.sh
+bash cloud/run_ablation_ab.sh
 
 # Computer 2: C (2.5M steps), then D (5M steps).
-bash scripts/run_ablation_cd.sh
+bash cloud/run_ablation_cd.sh
 ```
 
 Both default to seed 0 and write the same directory layout below
-`logs/ablation`, so their result folders can later be copied under one common
-root and analyzed together. The two computers may run simultaneously; A and B
-are sequential on the low-compute computer, while C and D are sequential on the
-high-compute computer.
+`~/logdir/drone_ablation`, so their result folders can later be copied under one
+common root and analyzed together. The two computers may run simultaneously; A
+and B are sequential on the first computer, while C and D are sequential on the
+second computer.
 
 Budgets and runtime settings can be overridden without editing the scripts:
 
 ```bash
-A_STEPS=300000 B_STEPS=600000 SEED=0 bash scripts/run_ablation_ab.sh
-C_STEPS=1500000 D_STEPS=3000000 SEED=0 bash scripts/run_ablation_cd.sh
+A_STEPS=300000 B_STEPS=600000 SEED=0 bash cloud/run_ablation_ab.sh
+C_STEPS=1500000 D_STEPS=3000000 SEED=0 bash cloud/run_ablation_cd.sh
 
 # Use CPU or choose a different output root when needed.
-JAX_PLATFORM=cpu LOG_ROOT=/path/to/logs bash scripts/run_ablation_ab.sh
+JAX_PLATFORM=cpu LOG_ROOT=/path/to/logs bash cloud/run_ablation_ab.sh
 ```
 
 Useful overrides:
 
 ```bash
 # Check generated commands without training.
-DRY_RUN=1 bash scripts/run_ablation.sh
+DRY_RUN=1 bash cloud/run_ablation.sh
 
 # Run a subset or a quick pipeline check.
-VARIANTS=a,b SEEDS=0 bash scripts/run_ablation.sh --run.steps 10000
+VARIANTS=a,b SEEDS=0 bash cloud/run_ablation.sh --run.steps 10000
 
 # CPU debugging only (full training is intended for CUDA).
-VARIANTS=a SEEDS=0 JAX_PLATFORM=cpu bash scripts/run_ablation.sh --run.steps 1000
+VARIANTS=a SEEDS=0 JAX_PLATFORM=cpu bash cloud/run_ablation.sh --run.steps 1000
 ```
 
-Runs are written to `logs/ablation/{A,B,C,D}/seed_N`. Existing non-empty run
-directories are resumed by DreamerV3 checkpoints, so use a new `LOG_ROOT` when
-starting a genuinely new experiment series.
+Runs are written to `~/logdir/drone_ablation/{A,B,C,D}/seed_N` by default.
+Existing non-empty run directories are resumed by DreamerV3 checkpoints, so use
+a new `LOG_ROOT` when starting a genuinely new experiment series.
 
 Summarize completed runs with:
 
 ```bash
-python3 scripts/analyze_ablation.py logs/ablation --threshold 0.8
+python3 cloud/analyze_ablation.py ~/logdir/drone_ablation --threshold 0.8
 ```
 
-The command prints a Markdown table and writes `logs/ablation/summary.csv`.
+The command prints a Markdown table and writes
+`~/logdir/drone_ablation/summary.csv`.
 The primary metric is deterministic-evaluation success. Collision, crash,
 timeout, final distance, and the environment step at which success first reaches
 80% explain why a variant fails and measure sample efficiency.
