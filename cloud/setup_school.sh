@@ -72,6 +72,8 @@ echo "==> Installing DreamerV3 requirements with CUDA JAX"
 # Drop jax/jaxlib (we pin 0.4.33 below) AND optax: the unpinned optax resolves
 # to 0.2.8, which forces jax>=0.5.3 and silently breaks our 0.4.33 install.
 # optax 0.2.4 is the newest release still compatible with jax 0.4.33.
+# The remaining requirements install CUDA 12.8 ptxas, which is required for
+# Blackwell/SM 120; the previous <=12.2 pin failed during XLA compilation.
 grep -vE '^(jax|jaxlib|optax)' "${REPO_ROOT}/third_party/dreamerv3/requirements.txt" > /tmp/req-nojax.txt
 ${PIP} install -r /tmp/req-nojax.txt
 ${PIP} install "optax==0.2.4" "jax[cuda12]==0.4.33"
@@ -87,10 +89,15 @@ echo "==> Sanity check"
 # embodied/elements/drone_nav are not pip-installed; they resolve via path.
 export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/third_party/dreamerv3:${PYTHONPATH:-}"
 "${PY}" - <<'PY'
-import jax, optax, gym_pybullet_drones, gymnasium, embodied, elements
+import jax, jax.numpy as jnp
+import optax, gym_pybullet_drones, gymnasium, embodied, elements
 import tensorflow as tf  # noqa: needed by elements TensorBoardOutput
 print("jax:", jax.__version__, "optax:", optax.__version__, "tf:", tf.__version__)
 print("jax devices:", jax.devices())
+# Device discovery alone does not invoke ptxas. Force a real XLA compilation
+# so setup fails immediately on an incompatible CUDA compiler/GPU combination.
+probe = (jnp.ones((32, 32)) @ jnp.ones((32, 32))).sum()
+print("jax compile probe:", float(probe.block_until_ready()))
 import drone_nav  # noqa
 print("drone_nav import OK")
 PY

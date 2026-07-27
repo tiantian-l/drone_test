@@ -33,8 +33,11 @@ pip install "jax[cuda12]==0.4.33"
 
 echo "==> Sanity check"
 python - <<'PY'
-import jax, gym_pybullet_drones, gymnasium, embodied, elements
+import jax, jax.numpy as jnp
+import gym_pybullet_drones, gymnasium, embodied, elements
 print("jax devices:", jax.devices())
+probe = (jnp.ones((32, 32)) @ jnp.ones((32, 32))).sum()
+print("jax compile probe:", float(probe.block_until_ready()))
 import drone_nav  # noqa
 print("drone_nav import OK")
 PY

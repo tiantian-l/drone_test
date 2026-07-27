@@ -37,6 +37,27 @@ log_image="${LOG_IMAGE:-True}"
 video_every="${VIDEO_EVERY:-100}"
 main_py="${REPO_ROOT}/third_party/dreamerv3/dreamerv3/main.py"
 
+# JAX 0.4.33's older XLA/LLVM backend aborts while lowering some BF16->F16
+# conversions for Blackwell (compute capability 10.x/12.x). Use FP32 there as
+# a compatibility mode while retaining BF16 on older CUDA GPUs. Users can force
+# either mode with JAX_COMPUTE_DTYPE=float32 or bfloat16.
+compute_dtype="${JAX_COMPUTE_DTYPE:-auto}"
+if [[ "${compute_dtype}" == "auto" ]]; then
+  compute_dtype=float32
+  if [[ "${jax_platform}" == "cuda" ]] && command -v nvidia-smi >/dev/null 2>&1; then
+    compute_cap="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -n 1 | tr -d '[:space:]' || true)"
+    compute_major="${compute_cap%%.*}"
+    if [[ "${compute_major}" =~ ^[0-9]+$ ]] && (( compute_major < 10 )); then
+      compute_dtype=bfloat16
+    fi
+  fi
+fi
+if [[ "${compute_dtype}" != "float32" && "${compute_dtype}" != "bfloat16" ]]; then
+  echo "JAX_COMPUTE_DTYPE must be auto, float32, or bfloat16" >&2
+  exit 2
+fi
+echo "JAX compute dtype: ${compute_dtype}"
+
 IFS=',' read -r -a variants <<< "${variants_csv}"
 IFS=',' read -r -a seeds <<< "${seeds_csv}"
 
@@ -62,6 +83,7 @@ for variant in "${variants[@]}"; do
       --seed "${seed}"
       --logdir "${logdir}"
       --jax.platform "${jax_platform}"
+      --jax.compute_dtype "${compute_dtype}"
       --logger.outputs jsonl,scope,tensorboard
       --env.drone.log_image "${log_image}"
       --env.drone.video_every "${video_every}"

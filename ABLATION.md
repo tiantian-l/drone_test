@@ -174,3 +174,44 @@ If C instead times out while remaining far from the goal, prioritize exploration
 temporal modeling, or curriculum design rather than increasing collision
 penalties. If it crashes even without nearby obstacles, inspect the action
 mapping and flight controller first.
+
+## Blackwell GPU setup
+
+RTX Blackwell GPUs with compute capability 12.0 require CUDA 12.8 or newer for
+native compiler support. The project keeps JAX 0.4.33 for DreamerV3 compatibility
+but installs `nvidia-cuda-nvcc-cu12>=12.8,<13`, so XLA uses a Blackwell-capable
+`ptxas`. `cloud/setup_school.sh` now performs a real compiled matrix operation;
+merely listing `jax.devices()` is not considered a sufficient GPU test.
+
+If an existing environment reports `ptxas too old`, pull the updated repository
+and rerun the idempotent setup script:
+
+```bash
+bash cloud/setup_school.sh
+```
+
+Verify the compiler and JAX execution before restarting a long run:
+
+```bash
+$HOME/miniconda3/envs/drone/bin/python -m pip show nvidia-cuda-nvcc-cu12
+$HOME/miniconda3/envs/drone/bin/python -c \
+  'import jax.numpy as j; print((j.ones((32,32)) @ j.ones((32,32))).block_until_ready())'
+```
+
+With JAX 0.4.33, Blackwell can still hit an LLVM failure while compiling mixed
+precision (`Unsupported conversion from bf16 to f16`). The ablation launcher
+therefore detects compute capability 10.x/12.x and selects `float32`
+automatically; older CUDA GPUs retain `bfloat16`. This is a compiler
+compatibility workaround, not an indication that Blackwell lacks BF16 hardware.
+
+The selected dtype is printed before each run. It can be overridden explicitly:
+
+```bash
+JAX_COMPUTE_DTYPE=float32 bash cloud/run_ablation_ab.sh
+JAX_COMPUTE_DTYPE=bfloat16 bash cloud/run_ablation_cd.sh
+```
+
+Do not force `bfloat16` on the affected Blackwell/JAX 0.4.33 combination. FP32
+uses more GPU memory and may train more slowly, but the 12M model is the safer
+first compatibility target. A later, separate dependency upgrade can test a
+newer JAX CUDA 12.8 build before mixed precision is restored.
