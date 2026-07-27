@@ -33,7 +33,8 @@ seeds_csv="${SEEDS:-0}"
 log_root="${LOG_ROOT:-$HOME/logdir/drone_ablation}"
 jax_platform="${JAX_PLATFORM:-cuda}"
 dry_run="${DRY_RUN:-0}"
-log_image="${LOG_IMAGE:-False}"
+log_image="${LOG_IMAGE:-True}"
+video_every="${VIDEO_EVERY:-100}"
 main_py="${REPO_ROOT}/third_party/dreamerv3/dreamerv3/main.py"
 
 IFS=',' read -r -a variants <<< "${variants_csv}"
@@ -63,6 +64,7 @@ for variant in "${variants[@]}"; do
       --jax.platform "${jax_platform}"
       --logger.outputs jsonl,scope,tensorboard
       --env.drone.log_image "${log_image}"
+      --env.drone.video_every "${video_every}"
       "$@"
     )
     printf '%q ' "${cmd[@]}"

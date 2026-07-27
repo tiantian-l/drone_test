@@ -57,6 +57,15 @@ common root and analyzed together. The two computers may run simultaneously; A
 and B are sequential on the first computer, while C and D are sequential on the
 second computer.
 
+Low-frequency policy videos are enabled by default and rendered only by worker
+0. A/B record one episode every 50 episodes; C/D record one every 100 episodes.
+Override the interval or disable video entirely with:
+
+```bash
+VIDEO_EVERY=200 bash cloud/run_ablation_cd.sh
+LOG_IMAGE=False bash cloud/run_ablation_ab.sh
+```
+
 Budgets and runtime settings can be overridden without editing the scripts:
 
 ```bash

@@ -10,9 +10,11 @@ a_steps="${A_STEPS:-500000}"
 b_steps="${B_STEPS:-1000000}"
 
 echo "[A] seed=${seed}, target_steps=${a_steps}"
-VARIANTS=a SEEDS="${seed}" \
+VARIANTS=a SEEDS="${seed}" LOG_IMAGE="${LOG_IMAGE:-True}" \
+  VIDEO_EVERY="${VIDEO_EVERY:-50}" \
   bash "${script_dir}/run_ablation.sh" --run.steps "${a_steps}" "$@"
 
 echo "[B] seed=${seed}, target_steps=${b_steps}"
-VARIANTS=b SEEDS="${seed}" \
+VARIANTS=b SEEDS="${seed}" LOG_IMAGE="${LOG_IMAGE:-True}" \
+  VIDEO_EVERY="${VIDEO_EVERY:-50}" \
   bash "${script_dir}/run_ablation.sh" --run.steps "${b_steps}" "$@"
