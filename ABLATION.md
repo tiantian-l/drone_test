@@ -1,0 +1,155 @@
+# Drone navigation A–D feasibility ablation
+
+## Objective
+
+The experiment identifies the first task scale at which learning breaks down.
+A–D use the same 12M DreamerV3 model, optimizer, replay settings, control rate,
+training ratio (512), and eight training environments. The current feasibility
+pass uses one training seed and increasing step ceilings to avoid spending the
+full D budget on tasks that were already shown to work. Learning curves must be
+compared at common step checkpoints when making a strict sample-efficiency
+claim.
+
+| Variant | Approx. route | Obstacles | Episode | Step ceiling | Capability tested |
+|---|---:|---:|---:|---:|---|
+| A | 4–6 m | 0 | 15 s | 0.5M | flight and goal reaching |
+| B | 8–10 m | 16 | 20 s | 1M | local obstacle avoidance |
+| C | 14–16 m | 40 | 30 s | 2.5M | medium-range planning |
+| D | ~24 m | 88 | 40 s | 5M | full target task |
+
+Each evaluation uses 16 deterministic maps and 64 episodes. One seed is enough
+for this feasibility pass. Once the final method and its key baseline have been
+selected, add independent seeds and report mean and standard deviation for the
+formal result.
+
+## Running
+
+From the repository root, with the GPU environment activated:
+
+```bash
+bash scripts/run_ablation.sh
+```
+
+For the two-computer, single-seed feasibility study, use the dedicated scripts:
+
+```bash
+# Computer 1: A (0.5M steps), then B (1M steps).
+bash scripts/run_ablation_ab.sh
+
+# Computer 2: C (2.5M steps), then D (5M steps).
+bash scripts/run_ablation_cd.sh
+```
+
+Both default to seed 0 and write the same directory layout below
+`logs/ablation`, so their result folders can later be copied under one common
+root and analyzed together. The two computers may run simultaneously; A and B
+are sequential on the low-compute computer, while C and D are sequential on the
+high-compute computer.
+
+Budgets and runtime settings can be overridden without editing the scripts:
+
+```bash
+A_STEPS=300000 B_STEPS=600000 SEED=0 bash scripts/run_ablation_ab.sh
+C_STEPS=1500000 D_STEPS=3000000 SEED=0 bash scripts/run_ablation_cd.sh
+
+# Use CPU or choose a different output root when needed.
+JAX_PLATFORM=cpu LOG_ROOT=/path/to/logs bash scripts/run_ablation_ab.sh
+```
+
+Useful overrides:
+
+```bash
+# Check generated commands without training.
+DRY_RUN=1 bash scripts/run_ablation.sh
+
+# Run a subset or a quick pipeline check.
+VARIANTS=a,b SEEDS=0 bash scripts/run_ablation.sh --run.steps 10000
+
+# CPU debugging only (full training is intended for CUDA).
+VARIANTS=a SEEDS=0 JAX_PLATFORM=cpu bash scripts/run_ablation.sh --run.steps 1000
+```
+
+Runs are written to `logs/ablation/{A,B,C,D}/seed_N`. Existing non-empty run
+directories are resumed by DreamerV3 checkpoints, so use a new `LOG_ROOT` when
+starting a genuinely new experiment series.
+
+Summarize completed runs with:
+
+```bash
+python3 scripts/analyze_ablation.py logs/ablation --threshold 0.8
+```
+
+The command prints a Markdown table and writes `logs/ablation/summary.csv`.
+The primary metric is deterministic-evaluation success. Collision, crash,
+timeout, final distance, and the environment step at which success first reaches
+80% explain why a variant fails and measure sample efficiency.
+
+## Interpretation and training-parameter decisions
+
+Use the first failed transition to select the next intervention:
+
+- **A fails:** do not increase model size. Validate action parameterization,
+  reward/termination semantics, and the Gymnasium adapter first.
+- **A succeeds but B fails:** the problem is local avoidance. Test a longer
+  lidar range and a learnable signed speed mapping; keep the route short.
+- **B succeeds but C fails:** the likely limit is temporal credit assignment.
+  First test `agent.imag_length: 30` and `batch_length: 96`. This increases GPU
+  cost, so it belongs in a second-stage training ablation, not the A–D baseline.
+- **C succeeds but D fails:** introduce a B→C→D curriculum or initialize D from
+  a C checkpoint. Compare that against D from scratch with the same total number
+  of environment steps.
+- **D succeeds inconsistently across seeds:** retain the environment and increase
+  seeds/evaluation maps before changing the agent.
+
+Do not compare variants only by final score: easier tasks may converge much
+earlier. Plot success against environment steps and require declining collision
+or timeout rates. A useful feasibility criterion is evaluation success ≥80% on
+at least two of three seeds, with no seed dominated by crashes.
+
+After locating the failure boundary, change one training factor at a time. A
+recommended second-stage order is: action mapping, reward balance, imagination
+length, sequence length, then model size. Changing all of them together would
+make it impossible to identify what restored learning.
+
+## Seed scope and reproducibility
+
+The current feasibility pass trains one independent model per variant using
+`seed=0`. Start, goal, and obstacle layouts are still randomized on every
+training episode; a single training seed does not mean that the model sees only
+one map or one initial state.
+
+One seed is sufficient for locating the A–D failure boundary, but it does not
+demonstrate training stability. After selecting the final method and its key
+baseline, run additional independent seeds and report mean and standard
+deviation for the formal thesis result.
+
+Evaluation uses fixed maps derived from each variant's `eval_seed_base`, so
+checkpoints from different training runs are compared on reproducible maps.
+
+## Reward baseline and follow-up
+
+The first C run keeps the current reward unchanged. It combines progress,
+goal, time, collision, crash, timeout, and obstacle-proximity terms. Keeping it
+fixed provides a baseline and avoids changing the environment and reward at the
+same time.
+
+The current weights make progress comparatively strong: moving 10 m toward the
+goal yields about +80 progress reward, whereas a later collision costs only
+-10. In C or D this can favor a locally useful but unsafe strategy that flies
+directly toward the goal and collides later. The progress scale also grows with
+route length, so raw episode scores are not comparable across A–D; use success,
+collision, timeout, and final-distance metrics instead.
+
+Only introduce a Reward V2 if C shows decreasing target distance together with
+a persistently high collision rate. The proposed follow-up should:
+
+- normalize progress by the episode's initial goal distance so A–D have similar
+  cumulative progress scales;
+- make collision and crash penalties large enough to offset a failed trajectory;
+- expand the obstacle safety margin from 0.5 m to approximately 0.8–1.0 m;
+- keep model and other training parameters fixed during the reward comparison.
+
+If C instead times out while remaining far from the goal, prioritize exploration,
+temporal modeling, or curriculum design rather than increasing collision
+penalties. If it crashes even without nearby obstacles, inspect the action
+mapping and flight controller first.

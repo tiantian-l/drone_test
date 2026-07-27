@@ -27,7 +27,7 @@ def main():
         ep_ret += reward
         if terminated or truncated:
             print(f"episode end @ t={t} ret={ep_ret:.2f} "
-                  f"dist={info['distance']:.3f} success={info['is_success']}")
+                  f"dist={info['final_distance']:.3f} success={info['is_success']}")
             obs, info = env.reset()
             ep_ret = 0.0
     env.close()
