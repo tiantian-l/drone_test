@@ -129,9 +129,14 @@ class NavigationAviary(BaseRLAviary):
         self.EPISODE_LEN_SEC = int(episode_len_sec)
         self.RANDOMIZE_GOAL = bool(randomize_goal)
         self.RANDOMIZE_START = bool(randomize_start)
-        self.GOAL_RANGE = np.array(goal_sample_range, dtype=np.float32)
-        self.START_RANGE = np.array(start_sample_range, dtype=np.float32)
-        self.BOUNDS = np.array(bounds, dtype=np.float32)
+        # Config files use flat six-value lists because elements.Config rejects
+        # nested numeric lists. Reshaping also preserves compatibility with the
+        # original ((xlo, xhi), (ylo, yhi), (zlo, zhi)) Python API.
+        self.GOAL_RANGE = np.array(
+            goal_sample_range, dtype=np.float32).reshape(3, 2)
+        self.START_RANGE = np.array(
+            start_sample_range, dtype=np.float32).reshape(3, 2)
+        self.BOUNDS = np.array(bounds, dtype=np.float32).reshape(3, 2)
         self.MAP_RANGE = np.array(map_range, dtype=np.float32)
         self.INCLUDE_ANG_VEL = bool(include_angular_velocity)
         self.SPEED_LIMIT_OVERRIDE = None if speed_limit is None else float(speed_limit)
