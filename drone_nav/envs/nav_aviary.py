@@ -119,6 +119,15 @@ class NavigationAviary(BaseRLAviary):
                  lidar_vfov=(-10.0, 20.0),
                  lidar_vbeams: int = 4,
                  lidar_start_offset: float = 0.06,
+                 # ---- perception encoding ----------------------------------
+                 # "flat"  -> single Box observation with the LiDAR scan
+                 #            flattened and concatenated onto the state vector
+                 #            (state + flattened LiDAR, encoded by one MLP).
+                 # "split" -> Dict observation {"state": proprio vector,
+                 #            "lidar": 2D (VBEAMS x H_BEAMS) scan}, so DreamerV3
+                 #            can route the state through an MLP and the LiDAR
+                 #            through a dedicated convolutional branch.
+                 perception: str = "flat",
                  # ---- logging / visualization ------------------------------
                  log_video: bool = False,
                  render_mode: str = "3d",
@@ -192,6 +201,16 @@ class NavigationAviary(BaseRLAviary):
             self._lidar_v_angles = np.deg2rad(
                 np.array([0.5 * (self.LIDAR_VFOV[0] + self.LIDAR_VFOV[1])],
                          dtype=np.float32))
+
+        # Perception encoding mode ("flat" vs "split"). "split" only makes sense
+        # when the LiDAR is enabled; fall back to "flat" otherwise so the
+        # observation space stays well-defined.
+        self.PERCEPTION = str(perception).lower()
+        if self.PERCEPTION not in ("flat", "split"):
+            raise ValueError(
+                f"perception must be 'flat' or 'split', got {perception!r}")
+        if self.PERCEPTION == "split" and not self.LIDAR_ENABLED:
+            self.PERCEPTION = "flat"
 
         # Visualization (third-person RGB frames for DreamerV3 log/image) -----
         # render_mode == "3d" -> photorealistic PyBullet camera (GPU OpenGL on
@@ -561,8 +580,24 @@ class NavigationAviary(BaseRLAviary):
 
     def _observationSpace(self):
         base = 12 if self.INCLUDE_ANG_VEL else 9
-        low = [-np.inf * np.ones(base, dtype=np.float32)]
-        high = [np.inf * np.ones(base, dtype=np.float32)]
+        state_low = -np.inf * np.ones(base, dtype=np.float32)
+        state_high = np.inf * np.ones(base, dtype=np.float32)
+        if self.PERCEPTION == "split":
+            # State vector and the LiDAR scan are exposed as separate keys so
+            # DreamerV3 encodes them with different sub-networks. The LiDAR is
+            # kept as a 2D (elevation layers x azimuth beams) grid so a
+            # convolutional branch can exploit its spatial structure.
+            return spaces.Dict({
+                "state": spaces.Box(
+                    low=state_low, high=state_high,
+                    shape=state_low.shape, dtype=np.float32),
+                "lidar": spaces.Box(
+                    low=0.0, high=1.0,
+                    shape=(self.LIDAR_VBEAMS, self.LIDAR_H_BEAMS),
+                    dtype=np.float32),
+            })
+        low = [state_low]
+        high = [state_high]
         if self.LIDAR_ENABLED:
             # Normalized ranges in [0, 1] (1 == free out to LIDAR_RANGE).
             low.append(np.zeros(self.LIDAR_N_BEAMS, dtype=np.float32))
@@ -579,6 +614,14 @@ class NavigationAviary(BaseRLAviary):
         parts = [rel_goal, vel, rpy]
         if self.INCLUDE_ANG_VEL:
             parts.append(s[13:16])             # body angular velocity
+        if self.PERCEPTION == "split":
+            state = np.concatenate(parts).astype(np.float32)
+            # (VBEAMS x H_BEAMS): the flat scan is laid out row-major as
+            # [layer0_h0, layer0_h1, ..., layer1_h0, ...], so reshaping recovers
+            # the (elevation, azimuth) grid expected by the conv branch.
+            lidar = self._read_lidar(s).reshape(
+                self.LIDAR_VBEAMS, self.LIDAR_H_BEAMS).astype(np.float32)
+            return {"state": state, "lidar": lidar}
         if self.LIDAR_ENABLED:
             parts.append(self._read_lidar(s))  # 3D lidar normalized ranges
         return np.concatenate(parts).astype(np.float32)
