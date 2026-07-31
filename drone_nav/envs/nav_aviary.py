@@ -37,6 +37,8 @@ from gym_pybullet_drones.utils.enums import DroneModel, Physics, ActionType, Obs
 class NavigationAviary(BaseRLAviary):
     """Single-agent A->B navigation with a velocity controller."""
 
+    _GEOMETRY_CONFIG_LOGGED = False
+
     ################################################################################
 
     def __init__(self,
@@ -99,7 +101,9 @@ class NavigationAviary(BaseRLAviary):
                                        (0.55, (4.0, 6.0))),
                  obstacle_clear_radius: float = 0.8,
                  obstacle_min_separation: float = 0.4,
-                 collision_distance: float = 0.3,
+                 # Hard termination threshold measured surface-to-surface
+                 # between the drone and an obstacle collision shape.
+                 collision_distance: float = 0.15,
                  # ---- guaranteed-feasible map (grid BFS) -------------------
                  # After sampling, a start->goal path is verified on an inflated
                  # occupancy grid; layouts without a corridor are resampled so
@@ -278,12 +282,59 @@ class NavigationAviary(BaseRLAviary):
         if self.SPEED_LIMIT_OVERRIDE is not None:
             self.SPEED_LIMIT = self.SPEED_LIMIT_OVERRIDE
 
+        # COLLISION_R is parsed from the selected drone URDF by BaseAviary, so
+        # geometry validation must run after the parent constructor.
+        self._validate_geometry_config()
+        self._log_geometry_config()
+
         # Set up the offscreen renderer used for the third-person video. On a
         # Linux GPU box (e.g. Tesla T4) this loads PyBullet's EGL plugin so the
         # frames are rendered on the GPU (ER_BULLET_HARDWARE_OPENGL); otherwise
         # it transparently falls back to the CPU TinyRenderer.
         if self.LOG_VIDEO and self.RENDER_MODE == "3d":
             self._setup_offscreen_renderer()
+
+    def _validate_geometry_config(self):
+        """Reject invalid or internally inconsistent safety geometry."""
+        if self.COLLISION_DISTANCE < 0:
+            raise ValueError(
+                "collision_distance must be non-negative, got "
+                f"{self.COLLISION_DISTANCE}")
+        if self.PATH_CLEARANCE <= 0:
+            raise ValueError(
+                f"path_clearance must be positive, got {self.PATH_CLEARANCE}")
+        if self.PATH_CELL_SIZE <= 0:
+            raise ValueError(
+                f"path_cell_size must be positive, got {self.PATH_CELL_SIZE}")
+
+        safety_margin = float(self.RW["safety_margin"])
+        if safety_margin <= self.COLLISION_DISTANCE:
+            raise ValueError(
+                "safety_margin must be greater than collision_distance, got "
+                f"{safety_margin} <= {self.COLLISION_DISTANCE}")
+
+        hard_center_clearance = self.COLLISION_R + self.COLLISION_DISTANCE
+        if self.PATH_CLEARANCE < hard_center_clearance:
+            raise ValueError(
+                "path_clearance must be at least drone_radius + "
+                "collision_distance, got "
+                f"{self.PATH_CLEARANCE} < {self.COLLISION_R} + "
+                f"{self.COLLISION_DISTANCE} = {hard_center_clearance}")
+
+    def _log_geometry_config(self):
+        """Record effective safety geometry once per process at startup."""
+        cls = type(self)
+        if cls._GEOMETRY_CONFIG_LOGGED:
+            return
+        print(
+            "[NavigationAviary] effective geometry: "
+            f"collision_distance={self.COLLISION_DISTANCE:.3f} m, "
+            f"drone_radius={self.COLLISION_R:.3f} m, "
+            f"path_clearance={self.PATH_CLEARANCE:.3f} m, "
+            f"path_cell_size={self.PATH_CELL_SIZE:.3f} m, "
+            f"safety_margin={float(self.RW['safety_margin']):.3f} m"
+        )
+        cls._GEOMETRY_CONFIG_LOGGED = True
 
     ################################################################################
     # Goal / start sampling
@@ -451,10 +502,18 @@ class NavigationAviary(BaseRLAviary):
                 return True
             for di, dj in neigh:
                 ni, nj = i + di, j + dj
-                if (0 <= ni < nx and 0 <= nj < ny
-                        and not visited[ni, nj] and not blocked[ni, nj]):
-                    visited[ni, nj] = True
-                    queue.append((ni, nj))
+                if not (0 <= ni < nx and 0 <= nj < ny):
+                    continue
+                if visited[ni, nj] or blocked[ni, nj]:
+                    continue
+                # A diagonal move is valid only when both side-adjacent
+                # orthogonal cells are free; otherwise it cuts through an
+                # inflated obstacle corner in continuous space.
+                if di != 0 and dj != 0:
+                    if blocked[i + di, j] or blocked[i, j + dj]:
+                        continue
+                visited[ni, nj] = True
+                queue.append((ni, nj))
         return False
 
     ################################################################################
@@ -683,8 +742,12 @@ class NavigationAviary(BaseRLAviary):
                         physicsClientId=self.CLIENT):
                     if pt[8] < min_d:
                         min_d = pt[8]
-        except Exception:
-            pass
+        except Exception as exc:
+            raise RuntimeError(
+                "Failed to query drone-obstacle surface clearance "
+                f"(obstacle_count={len(self._obstacle_ids)}, "
+                f"step_counter={self.step_counter})"
+            ) from exc
         self._clearance_cache = (self.step_counter, min_d)
         return min_d
 
