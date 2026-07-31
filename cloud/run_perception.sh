@@ -36,6 +36,11 @@ export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/third_party/dreamerv3:${PYTHONPATH:
 
 variants_csv="${VARIANTS:-flat,cnn,cnn_az,cnn_hi}"
 seeds_csv="${SEEDS:-0}"
+# Optional post-ablation curriculum controls. Defaults preserve the original
+# perception ablation. For Reward V2 use REWARD_CONFIG=drone_reward_v2 and set
+# TASK_TIER to b first, then c.
+task_tier="${TASK_TIER:-b}"
+reward_config="${REWARD_CONFIG:-}"
 log_root="${LOG_ROOT:-$HOME/logdir/drone_perception}"
 jax_platform="${JAX_PLATFORM:-cuda}"
 dry_run="${DRY_RUN:-0}"
@@ -66,6 +71,15 @@ echo "JAX compute dtype: ${compute_dtype}"
 IFS=',' read -r -a variants <<< "${variants_csv}"
 IFS=',' read -r -a seeds <<< "${seeds_csv}"
 
+if [[ "${task_tier}" != "b" && "${task_tier}" != "c" ]]; then
+  echo "TASK_TIER must be b or c" >&2
+  exit 2
+fi
+if [[ -n "${reward_config}" && "${reward_config}" != "drone_reward_v2" ]]; then
+  echo "REWARD_CONFIG must be empty or drone_reward_v2" >&2
+  exit 2
+fi
+
 for variant in "${variants[@]}"; do
   case "${variant}" in
     flat)   preset=drone_perc_flat;    variant_dir=FLAT ;;
@@ -75,10 +89,26 @@ for variant in "${variants[@]}"; do
     *) echo "Unknown variant '${variant}'; use flat,cnn,cnn_az,cnn_hi" >&2; exit 2 ;;
   esac
   for seed in "${seeds[@]}"; do
-    logdir="${log_root}/${variant_dir}/seed_${seed}"
+    configs=(drone_nav "${preset}")
+    if [[ "${task_tier}" == "c" ]]; then
+      configs+=(drone_ablation_c)
+    fi
+    if [[ -n "${reward_config}" ]]; then
+      configs+=("${reward_config}")
+    fi
+    if [[ "${task_tier}" == "b" && -z "${reward_config}" ]]; then
+      # Preserve the original ablation log layout for the default invocation.
+      logdir="${log_root}/${variant_dir}/seed_${seed}"
+    else
+      experiment_dir="${variant_dir}/task_${task_tier}"
+      if [[ -n "${reward_config}" ]]; then
+        experiment_dir+="/${reward_config}"
+      fi
+      logdir="${log_root}/${experiment_dir}/seed_${seed}"
+    fi
     cmd=(
       "${PY}" "${main_py}"
-      --configs drone_nav "${preset}"
+      --configs "${configs[@]}"
       --seed "${seed}"
       --logdir "${logdir}"
       --jax.platform "${jax_platform}"
