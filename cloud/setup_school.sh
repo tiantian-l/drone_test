@@ -59,7 +59,9 @@ fi
 PIP="${PY} -m pip --disable-pip-version-check"
 echo "==> Using interpreter: ${PY}"
 "${PY}" -c "import sys; print('site:', sys.prefix)"
-${PIP} install -U pip setuptools wheel
+# gym-pybullet-drones still imports pkg_resources at runtime. setuptools 82+
+# removed that module, so keep the newest compatible setuptools release line.
+${PIP} install -U pip "setuptools<82" wheel
 
 # ---------------------------------------------------------------------------
 # 3) Install the drone env + DreamerV3 (CUDA JAX bundles its own CUDA runtime)
@@ -91,6 +93,7 @@ export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/third_party/dreamerv3:${PYTHONPATH:
 "${PY}" - <<'PY'
 import jax, jax.numpy as jnp
 import optax, gym_pybullet_drones, gymnasium, embodied, elements
+import pkg_resources  # noqa: required by gym-pybullet-drones at runtime
 import tensorflow as tf  # noqa: needed by elements TensorBoardOutput
 print("jax:", jax.__version__, "optax:", optax.__version__, "tf:", tf.__version__)
 print("jax devices:", jax.devices())
