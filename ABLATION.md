@@ -17,7 +17,8 @@ claim.
 | C | 14–16 m | 40 | 30 s | 2.5M | medium-range planning |
 | D | ~24 m | 88 | 40 s | 5M | full target task |
 
-Each evaluation uses 16 deterministic maps and 64 episodes. One seed is enough
+Each evaluation uses 16 workers with four deterministic map slots each, for 64
+unique maps and 64 counted episodes. One seed is enough
 for this feasibility pass. Once the final method and its key baseline have been
 selected, add independent seeds and report mean and standard deviation for the
 formal result.
@@ -144,8 +145,21 @@ demonstrate training stability. After selecting the final method and its key
 baseline, run additional independent seeds and report mean and standard
 deviation for the formal thesis result.
 
-Evaluation uses fixed maps derived from each variant's `eval_seed_base`, so
-checkpoints from different training runs are compared on reproducible maps.
+Evaluation uses fixed maps derived from each variant's `eval_seed_base`. Worker
+`i` and map slot `j` use `eval_seed_base + i + 16*j`, so task B evaluates seeds
+120000--120063 exactly once per cycle. The driver requires four counted
+episodes from every worker and discards surplus episodes from fast workers.
+Every cycle is validated for 64 unique seeds before its metrics are accepted,
+and map-level outcomes are appended to `eval_maps.jsonl`. Checkpoints from
+different training runs are therefore compared on the same equally weighted
+maps.
+
+Inspect the latest map-level evaluation and list its failed maps with:
+
+```bash
+python3 cloud/analyze_eval_maps.py \
+  ~/logdir/drone_ablation/B/seed_0/eval_maps.jsonl
+```
 
 ## Reward baseline and follow-up
 

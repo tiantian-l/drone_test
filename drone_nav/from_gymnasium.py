@@ -184,7 +184,8 @@ class FromGymnasium(embodied.Env):
 
 
 def make_drone_nav(task, log_image=False, video_every=20, index=0,
-                   eval_mode=False, eval_seed_base=100000, **kwargs):
+                   eval_mode=False, eval_seed_base=100000,
+                   eval_maps_per_env=1, eval_seed_stride=1, **kwargs):
     """Factory used by DreamerV3's `make_env` for the ``drone`` suite.
 
     ``task`` selects a preset; everything after the first ``_`` is the preset
@@ -205,14 +206,16 @@ def make_drone_nav(task, log_image=False, video_every=20, index=0,
         The parallel env/worker index supplied by DreamerV3's ``make_env``.
         Only worker 0 renders, so the bulk of envs pay no rendering cost.
     eval_mode : bool
-        When True the env runs in deterministic-eval mode: each env replays a
-        FIXED map (start / goal / obstacles) derived from ``eval_seed_base +
-        index`` on every episode. Training envs pass ``eval_mode=False`` and
-        re-randomize every episode. ``main.py`` injects ``eval_mode=True`` only
-        for the evaluation drivers, so train and eval share one factory.
+        When True, each env cycles through a fixed subset of evaluation maps.
+        Training envs pass ``eval_mode=False`` and re-randomize every episode.
     eval_seed_base : int
         Base seed for the fixed evaluation maps; env ``index`` offsets it so the
         eval set is a distinct-but-reproducible batch of ``eval_envs`` maps.
+    eval_maps_per_env : int
+        Number of distinct fixed maps assigned to each evaluation worker.
+    eval_seed_stride : int
+        Seed distance between a worker's map slots. Set this equal to
+        ``eval_envs`` so workers' map subsets do not overlap.
     """
     from drone_nav.envs.nav_aviary import NavigationAviary
 
@@ -222,6 +225,8 @@ def make_drone_nav(task, log_image=False, video_every=20, index=0,
         log_video=bool(log_image) and index == 0,
         eval_mode=bool(eval_mode),
         eval_seed=(int(eval_seed_base) + int(index)) if eval_mode else 0,
+        eval_maps_per_env=int(eval_maps_per_env),
+        eval_seed_stride=int(eval_seed_stride),
         **kwargs)
     return FromGymnasium(
         env,
@@ -243,6 +248,9 @@ def make_drone_nav(task, log_image=False, video_every=20, index=0,
             ("final_distance", "final_distance", "last"),
             ("min_distance", "min_distance", "min"),
             ("min_lidar_dist", "min_lidar_dist", "min"),
+            ("eval_map_seed", "eval_map_seed", "last"),
+            ("eval_map_slot", "eval_map_slot", "last"),
+            ("eval_maps_per_env", "eval_maps_per_env", "last"),
         ),
         log_image=log_image,
         worker_index=index,

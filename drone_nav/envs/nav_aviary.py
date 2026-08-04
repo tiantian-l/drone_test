@@ -81,12 +81,13 @@ class NavigationAviary(BaseRLAviary):
                  # cross the larger arena in a reasonable horizon.
                  speed_limit=2.0,
                  # ---- deterministic evaluation -----------------------------
-                 # When True the whole task (start / goal / obstacles) is
-                 # regenerated from a FIXED per-env seed on every reset, so the
-                 # evaluation set is identical across eval cycles. Training envs
-                 # keep eval_mode=False and re-randomize every episode.
+                 # In evaluation, each worker cycles over a fixed, disjoint map
+                 # subset. This gives one independent map per counted episode
+                 # while keeping the complete benchmark reproducible.
                  eval_mode: bool = False,
                  eval_seed: int = 0,
+                 eval_maps_per_env: int = 1,
+                 eval_seed_stride: int = 1,
                  # ---- obstacles (static collision boxes) -------------------
                  obstacles_enabled: bool = True,
                  n_obstacles: int = 88,
@@ -157,6 +158,17 @@ class NavigationAviary(BaseRLAviary):
         # Deterministic-eval configuration ------------------------------------
         self.EVAL_MODE = bool(eval_mode)
         self.EVAL_SEED = int(eval_seed)
+        self.EVAL_MAPS_PER_ENV = int(eval_maps_per_env)
+        self.EVAL_SEED_STRIDE = int(eval_seed_stride)
+        if self.EVAL_MAPS_PER_ENV < 1:
+            raise ValueError(
+                f"eval_maps_per_env must be >= 1, got {self.EVAL_MAPS_PER_ENV}")
+        if self.EVAL_SEED_STRIDE < 1:
+            raise ValueError(
+                f"eval_seed_stride must be >= 1, got {self.EVAL_SEED_STRIDE}")
+        self._eval_episode_counter = 0
+        self.CURRENT_EVAL_MAP_SLOT = 0
+        self.CURRENT_EVAL_SEED = self.EVAL_SEED
 
         # Obstacle configuration ----------------------------------------------
         self.OBSTACLES_ENABLED = bool(obstacles_enabled)
@@ -542,12 +554,17 @@ class NavigationAviary(BaseRLAviary):
         # drone spawns at the (possibly randomized) start pose. Accessing
         # `self.np_random` lazily initializes the RNG on the first episode.
         #
-        # In eval mode we FORCE the fixed per-env seed on every reset, so the
-        # RNG is re-seeded identically each episode and the whole task
-        # (start / goal / obstacles) is reproduced exactly -> a stable, directly
-        # comparable evaluation set across eval cycles.
+        # Worker i receives eval_seed_base+i from the factory. Consecutive
+        # resets advance by eval_seed_stride and wrap after eval_maps_per_env,
+        # so every evaluation cycle covers the same finite map pool. A worker
+        # may start at a rotated slot after surplus (uncounted) episodes, but a
+        # full per-worker quota still visits every assigned map exactly once.
         if self.EVAL_MODE:
-            seed = self.EVAL_SEED
+            slot = self._eval_episode_counter % self.EVAL_MAPS_PER_ENV
+            seed = self.EVAL_SEED + slot * self.EVAL_SEED_STRIDE
+            self.CURRENT_EVAL_MAP_SLOT = slot
+            self.CURRENT_EVAL_SEED = seed
+            self._eval_episode_counter += 1
         if seed is not None:
             super().reset(seed=seed)
         self._resample_task()
@@ -848,6 +865,12 @@ class NavigationAviary(BaseRLAviary):
             "final_distance": dist,          # -> log/last/final_distance
             "min_distance": float(self._min_dist),  # -> log/min/min_distance
             "min_lidar_dist": float(self._min_lidar),  # -> log/min/min_lidar_dist
+            "eval_map_seed": (
+                int(self.CURRENT_EVAL_SEED) if self.EVAL_MODE else -1),
+            "eval_map_slot": (
+                int(self.CURRENT_EVAL_MAP_SLOT) if self.EVAL_MODE else -1),
+            "eval_maps_per_env": (
+                int(self.EVAL_MAPS_PER_ENV) if self.EVAL_MODE else -1),
             # FromGym/embodied uses is_terminal to mask bootstrapping; a
             # time-limit truncation is NOT terminal, a crash/collision/success is.
             "is_terminal": bool(success or crash or collision),
