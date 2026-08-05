@@ -94,6 +94,23 @@ Runs are written to `~/logdir/drone_ablation/{A,B,C,D}/seed_N` by default.
 Existing non-empty run directories are resumed by DreamerV3 checkpoints, so use
 a new `LOG_ROOT` when starting a genuinely new experiment series.
 
+### Dynamic-obstacle D task
+
+The optional `drone_dynamic_density` preset keeps D's 20 x 20 m obstacle field
+and 88 static boxes, then adds 20 moving cylinders (0.05/m²), matching the
+reference scene's dynamic-obstacle density. Diameters are 0.25, 0.50, 0.75,
+and 1.00 m (five each), height is 5.0 m, speed is sampled from 0.3--1.0 m/s,
+and the episode limit is extended to 60 seconds.
+
+```bash
+python third_party/dreamerv3/dreamerv3/main.py \
+  --configs drone_nav drone_ablation_d drone_dynamic_density
+```
+
+Dynamic cylinders are excluded from the static BFS feasibility check, but are
+real collision bodies seen by LiDAR and used by clearance shaping and collision
+termination. Their deterministic straight-line motion reflects at map bounds.
+
 Summarize completed runs with:
 
 ```bash

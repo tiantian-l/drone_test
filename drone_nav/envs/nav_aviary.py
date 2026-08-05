@@ -113,6 +113,14 @@ class NavigationAviary(BaseRLAviary):
                  path_cell_size: float = 0.25,
                  path_bounds_y=(-9.8, 9.8),
                  obstacle_layout_tries: int = 40,
+                 # ---- dynamic obstacles (moving collision cylinders) -------
+                 dynamic_obstacles_enabled: bool = False,
+                 dynamic_obstacle_density: float = 0.0,
+                 dynamic_obstacle_diameters=(0.25, 0.50, 0.75, 1.00),
+                 dynamic_obstacle_height: float = 5.0,
+                 dynamic_obstacle_speed_range=(0.3, 1.0),
+                 dynamic_obstacle_clear_radius: float = 0.8,
+                 dynamic_obstacle_min_separation: float = 0.05,
                  # ---- lidar (3D multi-layer range scan) --------------------
                  lidar_enabled: bool = True,
                  lidar_range: float = 4.0,
@@ -187,7 +195,29 @@ class NavigationAviary(BaseRLAviary):
         self.PATH_BOUNDS_Y = (float(path_bounds_y[0]), float(path_bounds_y[1]))
         self.OBSTACLE_LAYOUT_TRIES = int(obstacle_layout_tries)
         self._obstacle_specs = []     # (x, y, wx, wy, h) boxes for this episode
-        self._obstacle_ids = []       # PyBullet body ids (rebuilt each reset)
+        self._obstacle_ids = []       # all static + dynamic collision body ids
+        self._static_obstacle_ids = []
+
+        # Dynamic obstacles deliberately stay separate from `_obstacle_specs`,
+        # which is the static-only input to the BFS feasibility check.
+        obstacle_area = 4.0 * float(self.MAP_RANGE[0]) * float(self.MAP_RANGE[1])
+        self.DYNAMIC_OBSTACLES_ENABLED = bool(dynamic_obstacles_enabled)
+        self.DYNAMIC_OBSTACLE_DENSITY = float(dynamic_obstacle_density)
+        self.N_DYNAMIC_OBSTACLES = int(np.floor(
+            self.DYNAMIC_OBSTACLE_DENSITY * obstacle_area + 0.5))
+        self.DYNAMIC_OBSTACLE_DIAMETERS = tuple(
+            float(value) for value in dynamic_obstacle_diameters)
+        self.DYNAMIC_OBSTACLE_HEIGHT = float(dynamic_obstacle_height)
+        self.DYNAMIC_OBSTACLE_SPEED_RANGE = (
+            float(dynamic_obstacle_speed_range[0]),
+            float(dynamic_obstacle_speed_range[1]))
+        self.DYNAMIC_OBSTACLE_CLEAR_RADIUS = float(
+            dynamic_obstacle_clear_radius)
+        self.DYNAMIC_OBSTACLE_MIN_SEPARATION = float(
+            dynamic_obstacle_min_separation)
+        # Mutable entries: [x, y, radius, height, vx, vy].
+        self._dynamic_obstacle_specs = []
+        self._dynamic_obstacle_ids = []
         self._clearance_cache = (-1, np.inf)  # (step_counter, min surface dist)
         self._last_lidar = None       # most recent normalized scan (cached)
         self._min_lidar = np.inf      # closest lidar reading (m) this episode
@@ -327,6 +357,27 @@ class NavigationAviary(BaseRLAviary):
 
     def _validate_geometry_config(self):
         """Reject invalid or internally inconsistent safety geometry."""
+        if self.DYNAMIC_OBSTACLE_DENSITY < 0.0:
+            raise ValueError(
+                "dynamic_obstacle_density must be non-negative, got "
+                f"{self.DYNAMIC_OBSTACLE_DENSITY}")
+        if not self.DYNAMIC_OBSTACLE_DIAMETERS or any(
+                value <= 0.0 for value in self.DYNAMIC_OBSTACLE_DIAMETERS):
+            raise ValueError(
+                "dynamic_obstacle_diameters must contain positive values")
+        if self.DYNAMIC_OBSTACLE_HEIGHT <= 0.0:
+            raise ValueError(
+                "dynamic_obstacle_height must be positive, got "
+                f"{self.DYNAMIC_OBSTACLE_HEIGHT}")
+        speed_lo, speed_hi = self.DYNAMIC_OBSTACLE_SPEED_RANGE
+        if speed_lo < 0.0 or speed_hi < speed_lo:
+            raise ValueError(
+                "dynamic_obstacle_speed_range must satisfy 0 <= low <= high, "
+                f"got {self.DYNAMIC_OBSTACLE_SPEED_RANGE}")
+        if self.DYNAMIC_OBSTACLE_MIN_SEPARATION < 0.0:
+            raise ValueError(
+                "dynamic_obstacle_min_separation must be non-negative, got "
+                f"{self.DYNAMIC_OBSTACLE_MIN_SEPARATION}")
         if self.COLLISION_DISTANCE < 0:
             raise ValueError(
                 "collision_distance must be non-negative, got "
@@ -363,7 +414,9 @@ class NavigationAviary(BaseRLAviary):
             f"drone_radius={self.COLLISION_R:.3f} m, "
             f"path_clearance={self.PATH_CLEARANCE:.3f} m, "
             f"path_cell_size={self.PATH_CELL_SIZE:.3f} m, "
-            f"safety_margin={float(self.RW['safety_margin']):.3f} m"
+            f"safety_margin={float(self.RW['safety_margin']):.3f} m, "
+            f"static_obstacles={self.N_OBSTACLES}, "
+            f"dynamic_obstacles={self.N_DYNAMIC_OBSTACLES if self.DYNAMIC_OBSTACLES_ENABLED else 0}"
         )
         cls._GEOMETRY_CONFIG_LOGGED = True
 
@@ -391,6 +444,68 @@ class NavigationAviary(BaseRLAviary):
         # positions are chosen here; the PyBullet bodies are created later in
         # `_addObstacles` (after `super().reset()` rebuilds the simulation).
         self._sample_obstacles()
+        self._sample_dynamic_obstacles()
+
+    def _sample_dynamic_obstacles(self):
+        """Sample moving cylinders after the static BFS-validated layout.
+
+        Dynamic obstacles are excluded from `_path_exists`: they may temporarily
+        cross the static corridor, but cannot invalidate its geometric
+        existence. Initial positions avoid the static boxes, each other, and
+        the start/goal clear zones.
+        """
+        self._dynamic_obstacle_specs = []
+        if not self.DYNAMIC_OBSTACLES_ENABLED or self.N_DYNAMIC_OBSTACLES <= 0:
+            return
+
+        mx, my = float(self.MAP_RANGE[0]), float(self.MAP_RANGE[1])
+        start_xy = np.asarray(self.INIT_XYZS[0][:2], dtype=np.float32)
+        goal_xy = np.asarray(self.TARGET_POS[:2], dtype=np.float32)
+
+        for index in range(self.N_DYNAMIC_OBSTACLES):
+            diameter = self.DYNAMIC_OBSTACLE_DIAMETERS[
+                index % len(self.DYNAMIC_OBSTACLE_DIAMETERS)]
+            radius = diameter / 2.0
+            placed = False
+            for _ in range(300):
+                x = float(self.np_random.uniform(-mx + radius, mx - radius))
+                y = float(self.np_random.uniform(-my + radius, my - radius))
+                position = np.array([x, y], dtype=np.float32)
+
+                if np.linalg.norm(position - start_xy) < (
+                        self.DYNAMIC_OBSTACLE_CLEAR_RADIUS + radius):
+                    continue
+                if np.linalg.norm(position - goal_xy) < (
+                        self.DYNAMIC_OBSTACLE_CLEAR_RADIUS + radius):
+                    continue
+
+                # Static boxes use their circumscribed radii here. This is
+                # intentionally conservative and prevents initial overlap.
+                if any(
+                    np.linalg.norm(position - np.array([ox, oy])) <
+                    radius + 0.5 * np.hypot(wx, wy) +
+                    self.DYNAMIC_OBSTACLE_MIN_SEPARATION
+                    for ox, oy, wx, wy, _height in self._obstacle_specs
+                ):
+                    continue
+                if any(
+                    np.linalg.norm(position - np.array([spec[0], spec[1]])) <
+                    radius + spec[2] + self.DYNAMIC_OBSTACLE_MIN_SEPARATION
+                    for spec in self._dynamic_obstacle_specs
+                ):
+                    continue
+
+                speed = float(self.np_random.uniform(
+                    self.DYNAMIC_OBSTACLE_SPEED_RANGE[0],
+                    self.DYNAMIC_OBSTACLE_SPEED_RANGE[1]))
+                heading = float(self.np_random.uniform(-np.pi, np.pi))
+                self._dynamic_obstacle_specs.append([
+                    x, y, radius, self.DYNAMIC_OBSTACLE_HEIGHT,
+                    speed * np.cos(heading), speed * np.sin(heading)])
+                placed = True
+                break
+            if not placed:
+                break
 
     ################################################################################
 
@@ -591,6 +706,37 @@ class NavigationAviary(BaseRLAviary):
         self._min_lidar = np.inf
         return obs, info
 
+    def step(self, action):
+        """Move dynamic cylinders once, then advance the drone simulation."""
+        self._advance_dynamic_obstacles(1.0 / float(self.CTRL_FREQ))
+        # Positions changed without advancing PyBullet's step counter, so any
+        # clearance cached for this control step is now stale.
+        self._clearance_cache = (-1, np.inf)
+        return super().step(action)
+
+    def _advance_dynamic_obstacles(self, dt):
+        """Advance kinematic cylinders with deterministic boundary reflection."""
+        if not self._dynamic_obstacle_ids:
+            return
+        mx, my = float(self.MAP_RANGE[0]), float(self.MAP_RANGE[1])
+        for spec, body_id in zip(
+                self._dynamic_obstacle_specs, self._dynamic_obstacle_ids):
+            x, y, radius, height, vx, vy = spec
+            x += vx * dt
+            y += vy * dt
+            if x < -mx + radius or x > mx - radius:
+                vx = -vx
+                x = float(np.clip(x, -mx + radius, mx - radius))
+            if y < -my + radius or y > my - radius:
+                vy = -vy
+                y = float(np.clip(y, -my + radius, my - radius))
+            spec[:] = [x, y, radius, height, vx, vy]
+            p.resetBasePositionAndOrientation(
+                body_id,
+                [x, y, height / 2.0],
+                [0.0, 0.0, 0.0, 1.0],
+                physicsClientId=self.CLIENT)
+
     ################################################################################
     # Observation
     ################################################################################
@@ -655,7 +801,7 @@ class NavigationAviary(BaseRLAviary):
         scan is all ones.
         """
         n = self.LIDAR_N_BEAMS
-        if not self.OBSTACLES_ENABLED or not self._obstacle_ids:
+        if not self._obstacle_ids:
             return np.ones(n, dtype=np.float32)
         if s is None:
             s = self._getDroneStateVector(0)
@@ -788,7 +934,7 @@ class NavigationAviary(BaseRLAviary):
 
     def _obstacle_clearance(self):
         """Min surface distance from the drone to any obstacle (cached per step)."""
-        if not self.OBSTACLES_ENABLED or not self._obstacle_ids:
+        if not self._obstacle_ids:
             return np.inf
         if self._clearance_cache[0] == self.step_counter:
             return self._clearance_cache[1]
@@ -907,6 +1053,7 @@ class NavigationAviary(BaseRLAviary):
         # Static obstacle pillars (real collision bodies, mass 0). Recreated
         # every reset because BaseAviary.reset() wipes the simulation.
         self._obstacle_ids = []
+        self._static_obstacle_ids = []
         for (ox, oy, wx, wy, h) in self._obstacle_specs:
             try:
                 half = [wx / 2.0, wy / 2.0, h / 2.0]
@@ -923,6 +1070,35 @@ class NavigationAviary(BaseRLAviary):
                     baseVisualShapeIndex=vis,
                     basePosition=[ox, oy, h / 2.0],
                     physicsClientId=self.CLIENT)
+                self._obstacle_ids.append(bid)
+                self._static_obstacle_ids.append(bid)
+            except Exception:
+                pass
+
+        # Dynamic obstacles are cyan cylinders so both the 3D camera and the
+        # schematic clearly distinguish them from brown static boxes. They are
+        # massless kinematic collision bodies, moved explicitly in `step()`.
+        self._dynamic_obstacle_ids = []
+        for x, y, radius, height, _vx, _vy in self._dynamic_obstacle_specs:
+            try:
+                col = p.createCollisionShape(
+                    p.GEOM_CYLINDER,
+                    radius=radius,
+                    height=height,
+                    physicsClientId=self.CLIENT)
+                vis = p.createVisualShape(
+                    p.GEOM_CYLINDER,
+                    radius=radius,
+                    length=height,
+                    rgbaColor=[0.05, 0.75, 0.95, 0.75],
+                    physicsClientId=self.CLIENT)
+                bid = p.createMultiBody(
+                    baseMass=0,
+                    baseCollisionShapeIndex=col,
+                    baseVisualShapeIndex=vis,
+                    basePosition=[x, y, height / 2.0],
+                    physicsClientId=self.CLIENT)
+                self._dynamic_obstacle_ids.append(bid)
                 self._obstacle_ids.append(bid)
             except Exception:
                 pass
@@ -1269,6 +1445,14 @@ class NavigationAviary(BaseRLAviary):
                 xa, xb = sorted((x0px, x1px))
                 ya, yb = sorted((y0px, y1px))
                 image[ya:yb + 1, xa:xb + 1] = obs_color
+
+        # Moving cylinders as cyan discs (their XY footprints).
+        dynamic_color = np.array([15, 185, 225], dtype=np.uint8)
+        for ox, oy, radius, _height, _vx, _vy in self._dynamic_obstacle_specs:
+            cx, cy = self._world_to_pixel(float(ox), float(oy))
+            edge_x, _ = self._world_to_pixel(float(ox + radius), float(oy))
+            pixel_radius = max(2, abs(edge_x - cx))
+            self._draw_disc(image, cx, cy, pixel_radius, dynamic_color)
 
         if len(self._trail) >= 2:
             trail_color = np.array([52, 120, 220], dtype=np.uint8)
