@@ -103,8 +103,17 @@ and 1.00 m (five each), height is 5.0 m, speed is sampled from 0.3--1.0 m/s,
 and the episode limit is extended to 60 seconds.
 
 ```bash
-python third_party/dreamerv3/dreamerv3/main.py \
-  --configs drone_nav drone_ablation_d drone_dynamic_density
+bash cloud/run_dynamic_density.sh
+```
+
+The launcher sets the Python paths, activates the `drone` Conda environment,
+enables JSONL and TensorBoard logs, and writes each seed to
+`~/logdir/drone_dynamic_density/seed_N`. Useful overrides include:
+
+```bash
+STEPS=1000000 SEED=0 bash cloud/run_dynamic_density.sh
+SEEDS=0,1,2 LOG_ROOT=/path/to/logs bash cloud/run_dynamic_density.sh
+DRY_RUN=1 bash cloud/run_dynamic_density.sh
 ```
 
 Dynamic cylinders are excluded from the static BFS feasibility check, but are
