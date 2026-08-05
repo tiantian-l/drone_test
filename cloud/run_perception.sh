@@ -38,7 +38,7 @@ variants_csv="${VARIANTS:-flat,cnn,cnn_az,cnn_hi}"
 seeds_csv="${SEEDS:-0}"
 # Optional post-ablation curriculum controls. Defaults preserve the original
 # perception ablation. For Reward V2 use REWARD_CONFIG=drone_reward_v2 and set
-# TASK_TIER to b first, then c.
+# TASK_TIER to b, c, or d.
 task_tier="${TASK_TIER:-b}"
 reward_config="${REWARD_CONFIG:-}"
 log_root="${LOG_ROOT:-$HOME/logdir/drone_perception}"
@@ -71,8 +71,8 @@ echo "JAX compute dtype: ${compute_dtype}"
 IFS=',' read -r -a variants <<< "${variants_csv}"
 IFS=',' read -r -a seeds <<< "${seeds_csv}"
 
-if [[ "${task_tier}" != "b" && "${task_tier}" != "c" ]]; then
-  echo "TASK_TIER must be b or c" >&2
+if [[ "${task_tier}" != "b" && "${task_tier}" != "c" && "${task_tier}" != "d" ]]; then
+  echo "TASK_TIER must be b, c, or d" >&2
   exit 2
 fi
 if [[ -n "${reward_config}" && "${reward_config}" != "drone_reward_v2" ]]; then
@@ -90,8 +90,8 @@ for variant in "${variants[@]}"; do
   esac
   for seed in "${seeds[@]}"; do
     configs=(drone_nav "${preset}")
-    if [[ "${task_tier}" == "c" ]]; then
-      configs+=(drone_ablation_c)
+    if [[ "${task_tier}" == "c" || "${task_tier}" == "d" ]]; then
+      configs+=("drone_ablation_${task_tier}")
     fi
     if [[ -n "${reward_config}" ]]; then
       configs+=("${reward_config}")
