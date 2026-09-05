@@ -17,7 +17,7 @@ class FromGymnasium(embodied.Env):
 
     def __init__(self, env, obs_key="state", act_key="action",
                  log_keys=(), log_image=False, image_key="log/image",
-                 worker_index=0, video_every=0):
+                 worker_index=0, video_every=0, reset_seed=None):
         self._env = env
         self._obs_dict = hasattr(self._env.observation_space, "spaces")
         self._act_dict = hasattr(self._env.action_space, "spaces")
@@ -48,6 +48,9 @@ class FromGymnasium(embodied.Env):
         # (and every non-recording episode) emits a cheap zero placeholder of
         # the same shape so the observation space stays consistent across envs.
         self._worker_index = int(worker_index)
+        # Seed only the first reset. Later resets continue the same Gymnasium
+        # RNG stream, yielding reproducible but newly sampled tasks each episode.
+        self._reset_seed = None if reset_seed is None else int(reset_seed)
         self._video_every = int(video_every)
         self._episode = -1          # incremented to 0 on the first reset
         self._recording = False
@@ -105,7 +108,8 @@ class FromGymnasium(embodied.Env):
             self._done = False
             self._episode += 1
             self._recording = self._should_record()
-            obs, self._info = self._env.reset()
+            seed = self._reset_seed if self._episode == 0 else None
+            obs, self._info = self._env.reset(seed=seed)
             return self._obs(obs, 0.0, is_first=True)
         if self._act_dict:
             action = self._unflatten(action)
@@ -185,7 +189,8 @@ class FromGymnasium(embodied.Env):
 
 def make_drone_nav(task, log_image=False, video_every=20, index=0,
                    eval_mode=False, eval_seed_base=100000,
-                   eval_maps_per_env=1, eval_seed_stride=1, **kwargs):
+                   eval_maps_per_env=1, eval_seed_stride=1,
+                   train_seed=None, **kwargs):
     """Factory used by DreamerV3's `make_env` for the ``drone`` suite.
 
     ``task`` selects a preset; everything after the first ``_`` is the preset
@@ -216,6 +221,10 @@ def make_drone_nav(task, log_image=False, video_every=20, index=0,
     eval_seed_stride : int
         Seed distance between a worker's map slots. Set this equal to
         ``eval_envs`` so workers' map subsets do not overlap.
+    train_seed : int or None
+        Reproducible RNG seed for this training worker. It is applied on the
+        first reset only; subsequent episodes continue that worker's RNG stream.
+        Evaluation ignores this and uses its fixed map-seed schedule instead.
     """
     from drone_nav.envs.nav_aviary import NavigationAviary
 
@@ -255,4 +264,5 @@ def make_drone_nav(task, log_image=False, video_every=20, index=0,
         log_image=log_image,
         worker_index=index,
         video_every=video_every,
+        reset_seed=None if eval_mode else train_seed,
     )

@@ -28,7 +28,7 @@ from sys import platform
 
 import numpy as np
 import pybullet as p
-from gymnasium import spaces
+from gymnasium import Env, spaces
 
 from gym_pybullet_drones.envs.BaseRLAviary import BaseRLAviary
 from gym_pybullet_drones.utils.enums import DroneModel, Physics, ActionType, ObservationType
@@ -681,9 +681,12 @@ class NavigationAviary(BaseRLAviary):
             self.CURRENT_EVAL_SEED = seed
             self._eval_episode_counter += 1
         if seed is not None:
-            super().reset(seed=seed)
+            # Seed Gymnasium's RNG without rebuilding the PyBullet simulation.
+            # Calling BaseAviary.reset(seed=seed) here and again below would
+            # reseed twice, making the first two training episodes identical.
+            Env.reset(self, seed=seed)
         self._resample_task()
-        obs, info = super().reset(seed=seed, options=options)
+        obs, info = super().reset(seed=None, options=options)
         state = self._getDroneStateVector(0)
         d0 = float(np.linalg.norm(self.TARGET_POS - state[0:3]))
         self._prev_dist = d0

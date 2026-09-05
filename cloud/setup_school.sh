@@ -71,14 +71,15 @@ ${PIP} install "numpy<2"
 ${PIP} install -e "${REPO_ROOT}/third_party/gym-pybullet-drones"
 
 echo "==> Installing DreamerV3 requirements with CUDA JAX"
-# Drop jax/jaxlib (we pin 0.4.33 below) AND optax: the unpinned optax resolves
-# to 0.2.8, which forces jax>=0.5.3 and silently breaks our 0.4.33 install.
+# Drop jax/jaxlib (we pin 0.4.33 below), Optax, and the requirements file's
+# legacy <=12.2 CUDA compiler pin. Unpinned newer Optax forces jax>=0.5.3,
+# while Blackwell needs a CUDA 12.8 compiler to lower SM 120 kernels.
 # optax 0.2.4 is the newest release still compatible with jax 0.4.33.
-# The remaining requirements install CUDA 12.8 ptxas, which is required for
-# Blackwell/SM 120; the previous <=12.2 pin failed during XLA compilation.
-grep -vE '^(jax|jaxlib|optax)' "${REPO_ROOT}/third_party/dreamerv3/requirements.txt" > /tmp/req-nojax.txt
+# CUDA 12.8 ptxas is required for Blackwell/SM 120; the previous <=12.2 pin
+# failed during XLA compilation.
+grep -vE '^(jax|jaxlib|optax|nvidia-cuda-nvcc-cu12)' "${REPO_ROOT}/third_party/dreamerv3/requirements.txt" > /tmp/req-nojax.txt
 ${PIP} install -r /tmp/req-nojax.txt
-${PIP} install "optax==0.2.4" "jax[cuda12]==0.4.33"
+${PIP} install "optax==0.2.4" "jax[cuda12]==0.4.33" "nvidia-cuda-nvcc-cu12>=12.8,<13"
 # elements' TensorBoardOutput imports tensorflow; install the CPU build (JAX
 # owns the GPU) so tensorboard logging works without an extra system package.
 ${PIP} install "tensorflow-cpu<2.16"
