@@ -72,6 +72,7 @@ for condition in "${conditions[@]}"; do
       --logdir "${logdir}"
       --jax.platform "${jax_platform}"
       --jax.compute_dtype "${compute_dtype}"
+      --run.debug False
       --logger.outputs jsonl,scope,tensorboard
       --env.drone.log_image "${log_image}"
       --env.drone.video_every "${video_every}"
