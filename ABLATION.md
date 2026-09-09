@@ -184,7 +184,12 @@ SOURCE_LOGDIR=~/autodl-tmp/drone_static_factorial/20_sparse/seed_0 \
 The source is never modified. Existing branch directories are never
 overwritten. The script uses independent copy-on-write copies when supported;
 otherwise it makes normal copies because writable replay directories must not
-be shared. Set `PREPARE_ONLY=1` to create and inspect all branch directories
+be shared. Before copying, it requires a completed rolling checkpoint and
+non-empty train/eval replay chunk directories. Both flat `ckpt/` layouts and
+timestamped `ckpt/<generation>/` layouts are supported; the latest generation
+containing `done`, `step.pkl`, and `agent.pkl` supplies the fork step. Set
+`PREPARE_ONLY=1` to create
+and inspect all branch directories
 without starting training, `DRY_RUN=1` to print commands without copying, or
 `BRANCHES=a_control,e_replay_1m` to run only selected branches. Since the full
 checkpoint restores its counter, the script sets the final `run.steps` to the

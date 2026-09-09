@@ -26,9 +26,15 @@ if [[ -z "${SOURCE_LOGDIR:-}" ]]; then
 fi
 
 source_logdir="${SOURCE_LOGDIR%/}"
-for required in ckpt/step.pkl ckpt/agent.pkl replay eval_replay; do
+for required in config.yaml ckpt replay eval_replay; do
   if [[ ! -e "${source_logdir}/${required}" ]]; then
     echo "Full-checkpoint component is missing: ${source_logdir}/${required}" >&2
+    exit 2
+  fi
+done
+for replay_dir in replay eval_replay; do
+  if ! compgen -G "${source_logdir}/${replay_dir}/*.npz" >/dev/null; then
+    echo "No replay chunks found in: ${source_logdir}/${replay_dir}" >&2
     exit 2
   fi
 done
@@ -37,6 +43,9 @@ export PYTHONNOUSERSITE=1
 export PATH="${RUNTIME_BIN}:${PATH}"
 export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/third_party/dreamerv3:${PYTHONPATH:-}"
 
+# Elements may store files directly in ckpt/ or in timestamped generations
+# below it. The helper selects the latest generation containing done, step.pkl,
+# and agent.pkl, matching the rolling checkpoint's committed layout.
 checkpoint_step="$("${PY}" "${REPO_ROOT}/cloud/checkpoint_step.py" "${source_logdir}/ckpt")"
 extra_steps="${EXTRA_STEPS:-500000}"
 if [[ ! "${extra_steps}" =~ ^[1-9][0-9]*$ ]]; then
