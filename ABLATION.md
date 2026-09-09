@@ -159,6 +159,51 @@ recommended second-stage order is: action mapping, reward balance, imagination
 length, sequence length, then model size. Changing all of them together would
 make it impossible to identify what restored learning.
 
+## Plateau checkpoint continuation matrix
+
+To diagnose a late-training success plateau, freeze one rolling full checkpoint
+and fork the complete run directory into five independent continuations. The
+forks preserve the same agent, optimizer, counter, `replay/`, and
+`eval_replay/` state; only the named factor differs:
+
+| Branch | Replay size | Actor entropy | Imagination length | Learning rate |
+|---|---:|---:|---:|---:|
+| A Control | 5M | 3e-4 | 15 | 4e-5 |
+| B Entropy | 5M | 1e-3 | 15 | 4e-5 |
+| C Horizon | 5M | 3e-4 | 30 | 4e-5 |
+| D Low-LR | 5M | 3e-4 | 15 | 1e-5 |
+| E Replay-1M | 1M | 3e-4 | 15 | 4e-5 |
+
+Run the matrix on the Linux training host with:
+
+```bash
+SOURCE_LOGDIR=~/autodl-tmp/drone_static_factorial/20_sparse/seed_0 \
+  EXTRA_STEPS=500000 bash cloud/run_plateau_forks.sh
+```
+
+The source is never modified. Existing branch directories are never
+overwritten. The script uses independent copy-on-write copies when supported;
+otherwise it makes normal copies because writable replay directories must not
+be shared. Set `PREPARE_ONLY=1` to create and inspect all branch directories
+without starting training, `DRY_RUN=1` to print commands without copying, or
+`BRANCHES=a_control,e_replay_1m` to run only selected branches. Since the full
+checkpoint restores its counter, the script sets the final `run.steps` to the
+checkpoint step plus `EXTRA_STEPS`.
+
+After training, compare the mean of the last three post-fork evaluations:
+
+```bash
+python3 cloud/analyze_plateau_forks.py \
+  ~/autodl-tmp/drone_static_factorial/20_sparse/seed_0_plateau_forks \
+  --fork-step 1400000 --tail 3
+```
+
+Interpret every treatment relative to A, not relative to its isolated maximum.
+A controls for extra training; B tests insufficient exploration; C tests the
+imagination/planning horizon; D tests late-stage update instability; and E tests
+whether old replay data dilutes current-policy experience. Do not combine
+treatments until a single-factor branch shows a repeatable improvement.
+
 ## Seed scope and reproducibility
 
 The current feasibility pass trains one independent model per variant using
