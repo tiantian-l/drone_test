@@ -37,16 +37,20 @@ def resolve_generation(path):
     if complete_generation(path):
         return path
     latest = path / "latest"
-    if complete_generation(latest):
+    if latest.is_symlink() and complete_generation(latest):
         return latest.resolve()
+    if latest.is_file():
+        name = latest.read_text(encoding="utf-8").strip()
+        generation = path / name
+        if not complete_generation(generation):
+            raise FileNotFoundError(
+                f"Checkpoint latest points to an incomplete generation: "
+                f"{generation}")
+        return generation
     if not path.is_dir():
         raise FileNotFoundError(f"Checkpoint directory not found: {path}")
-    generations = sorted(
-        child for child in path.iterdir() if complete_generation(child))
-    if not generations:
-        raise FileNotFoundError(
-            f"No complete checkpoint generation found below: {path}")
-    return generations[-1]
+    raise FileNotFoundError(
+        f"Checkpoint has no valid latest pointer: {path / 'latest'}")
 
 
 def main():

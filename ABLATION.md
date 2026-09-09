@@ -189,10 +189,13 @@ the supplied `LOGDIR`, which must be the dedicated branch copy on that server.
 Before training, it requires non-empty train/eval replay chunk directories and
 a completed rolling checkpoint. Both flat `ckpt/` layouts and
 timestamped `ckpt/<generation>/` layouts are supported; the latest generation
-containing `done`, `step.pkl`, and `agent.pkl` supplies the starting step. Set
+named by the checkpoint's `latest` pointer must contain `done`, `step.pkl`, and
+`agent.pkl` and supplies the starting step. Set
 `DRY_RUN=1` to validate the directory and print the command without training.
 Since the full checkpoint restores its counter, final `run.steps` is the
-checkpoint step plus `EXTRA_STEPS`.
+checkpoint step plus `EXTRA_STEPS`. After an interrupted continuation, restart
+with `TARGET_STEPS` set to the original target printed by the first launch;
+otherwise another `EXTRA_STEPS` would be added to the newer recovery checkpoint.
 
 After training, collect the five servers' `metrics.jsonl` files into directories
 named after their branches, then compare the last three post-checkpoint
