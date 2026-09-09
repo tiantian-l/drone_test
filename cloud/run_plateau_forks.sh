@@ -63,19 +63,11 @@ export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/third_party/dreamerv3:${PYTHONPATH:
 # Supports both flat ckpt/ and timestamped ckpt/<generation>/ layouts.
 checkpoint_step="$("${PY}" "${REPO_ROOT}/cloud/checkpoint_step.py" "${logdir}/ckpt")"
 extra_steps="${EXTRA_STEPS:-500000}"
-if [[ -n "${TARGET_STEPS:-}" ]]; then
-  if [[ ! "${TARGET_STEPS}" =~ ^[1-9][0-9]*$ ]] || (( TARGET_STEPS <= checkpoint_step )); then
-    echo "TARGET_STEPS must be an integer greater than checkpoint step ${checkpoint_step}." >&2
-    exit 2
-  fi
-  target_steps="${TARGET_STEPS}"
-else
-  if [[ ! "${extra_steps}" =~ ^[1-9][0-9]*$ ]]; then
-    echo "EXTRA_STEPS must be a positive integer, got '${extra_steps}'." >&2
-    exit 2
-  fi
-  target_steps=$((checkpoint_step + extra_steps))
+if [[ ! "${extra_steps}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "EXTRA_STEPS must be a positive integer, got '${extra_steps}'." >&2
+  exit 2
 fi
+target_steps=$((checkpoint_step + extra_steps))
 
 task_preset="${TASK_PRESET:-drone_static_20_sparse}"
 seed="${SEED:-0}"
