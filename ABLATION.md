@@ -161,9 +161,9 @@ make it impossible to identify what restored learning.
 
 ## Plateau checkpoint continuation matrix
 
-To diagnose a late-training success plateau, freeze one rolling full checkpoint
-and fork the complete run directory into five independent continuations. The
-forks preserve the same agent, optimizer, counter, `replay/`, and
+To diagnose a late-training success plateau, place the same rolling full
+checkpoint on five servers and assign one continuation branch to each server.
+Every branch restores its local agent, optimizer, counter, `replay/`, and
 `eval_replay/` state; only the named factor differs:
 
 | Branch | Replay size | Actor entropy | Imagination length | Learning rate |
@@ -174,32 +174,33 @@ forks preserve the same agent, optimizer, counter, `replay/`, and
 | D Low-LR | 5M | 3e-4 | 15 | 1e-5 |
 | E Replay-1M | 1M | 3e-4 | 15 | 4e-5 |
 
-Run the matrix on the Linux training host with:
+Run exactly one branch on each Linux training host. For example, the E server
+uses:
 
 ```bash
-SOURCE_LOGDIR=~/autodl-tmp/drone_static_factorial/20_sparse/seed_0 \
-  EXTRA_STEPS=500000 bash cloud/run_plateau_forks.sh
+LOGDIR=~/autodl-tmp/drone_static_factorial/20_sparse/seed_0 \
+  BRANCH=e_replay_1m EXTRA_STEPS=500000 \
+  bash cloud/run_plateau_forks.sh
 ```
 
-The source is never modified. Existing branch directories are never
-overwritten. The script uses independent copy-on-write copies when supported;
-otherwise it makes normal copies because writable replay directories must not
-be shared. Before copying, it requires a completed rolling checkpoint and
-non-empty train/eval replay chunk directories. Both flat `ckpt/` layouts and
+Valid `BRANCH` values are `a_control`, `b_entropy`, `c_horizon`, `d_low_lr`, and
+`e_replay_1m`. The script never copies a run directory: it resumes and writes to
+the supplied `LOGDIR`, which must be the dedicated branch copy on that server.
+Before training, it requires non-empty train/eval replay chunk directories and
+a completed rolling checkpoint. Both flat `ckpt/` layouts and
 timestamped `ckpt/<generation>/` layouts are supported; the latest generation
-containing `done`, `step.pkl`, and `agent.pkl` supplies the fork step. Set
-`PREPARE_ONLY=1` to create
-and inspect all branch directories
-without starting training, `DRY_RUN=1` to print commands without copying, or
-`BRANCHES=a_control,e_replay_1m` to run only selected branches. Since the full
-checkpoint restores its counter, the script sets the final `run.steps` to the
+containing `done`, `step.pkl`, and `agent.pkl` supplies the starting step. Set
+`DRY_RUN=1` to validate the directory and print the command without training.
+Since the full checkpoint restores its counter, final `run.steps` is the
 checkpoint step plus `EXTRA_STEPS`.
 
-After training, compare the mean of the last three post-fork evaluations:
+After training, collect the five servers' `metrics.jsonl` files into directories
+named after their branches, then compare the last three post-checkpoint
+evaluations:
 
 ```bash
 python3 cloud/analyze_plateau_forks.py \
-  ~/autodl-tmp/drone_static_factorial/20_sparse/seed_0_plateau_forks \
+  ~/plateau_results \
   --fork-step 1400000 --tail 3
 ```
 
