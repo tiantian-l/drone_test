@@ -55,10 +55,26 @@ echo "==> Installing Python dependencies with CUDA JAX"
 REQ_FILE="$(mktemp /tmp/dreamerv3-nojax.XXXXXX.txt)"
 grep -vE '^(jax|jaxlib|optax|nvidia-cuda-nvcc-cu12)' \
   "${REPO_ROOT}/third_party/dreamerv3/requirements.txt" > "${REQ_FILE}"
-"${PY}" -m pip --disable-pip-version-check install -r "${REQ_FILE}"
-"${PY}" -m pip --disable-pip-version-check install \
-  "optax==0.2.4" "jax[cuda12]==0.4.33" "nvidia-cuda-nvcc-cu12>=12.8,<13"
-"${PY}" -m pip --disable-pip-version-check install "tensorflow-cpu<2.16" tensorboard
+# Resolve TensorFlow and the Google API packages together so protobuf stays
+# compatible, including when repairing an environment installed in stages.
+"${PY}" -m pip --disable-pip-version-check install -r "${REQ_FILE}" \
+  "optax==0.2.4" "jax[cuda12]==0.4.33" "nvidia-cuda-nvcc-cu12>=12.8,<13" \
+  "tensorflow-cpu<2.16" tensorboard "protobuf<5" \
+  google-api-core googleapis-common-protos proto-plus
+"${PY}" -m pip check
+
+# Install on a login node with SKIP_GPU_CHECK=1; validate on an allocated GPU.
+if [ "${SKIP_GPU_CHECK:-0}" = 1 ]; then
+  echo "==> Dependencies installed; GPU validation skipped. Validate on an allocated GPU node."
+  exit 0
+fi
+
+# Bound library thread pools on shared cluster nodes. XLA can still require
+# additional threads, so this does not replace a compute-node allocation.
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-1}"
+export TF_NUM_INTRAOP_THREADS="${TF_NUM_INTRAOP_THREADS:-1}"
+export TF_NUM_INTEROP_THREADS="${TF_NUM_INTEROP_THREADS:-1}"
 
 echo "==> Running GPU sanity check"
 export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/third_party/dreamerv3:${PYTHONPATH:-}"
@@ -69,6 +85,7 @@ import pkg_resources
 import tensorflow as tf
 print("jax:", jax.__version__, "optax:", optax.__version__, "tf:", tf.__version__)
 print("jax devices:", jax.devices())
+assert any(device.platform == "gpu" for device in jax.devices()), "No GPU available; run this check on an allocated GPU node."
 probe = (jnp.ones((32, 32)) @ jnp.ones((32, 32))).sum()
 print("jax compile probe:", float(probe.block_until_ready()))
 import drone_nav
