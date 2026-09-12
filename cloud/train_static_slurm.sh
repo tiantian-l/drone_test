@@ -5,7 +5,7 @@
 #SBATCH --gpus=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
-#SBATCH --time=12:00:00
+#SBATCH --time=06:00:00
 #SBATCH --partition=normal-a100-40
 #SBATCH --account=eehpc-dev-2026d07-102g
 #SBATCH --output=slurm-%j.out
@@ -33,10 +33,10 @@ LOG_ROOT=/projects/EEHPC-DEV-2026D07-102/dreamer/logdir/drone_static_factorial_a
 LOG_IMAGE=True \
 VIDEO_EVERY=100 \
 JAX_COMPUTE_DTYPE=bfloat16 \
-DRONE_RENDERER=tiny \
 bash cloud/run_static_factorial.sh \
+  --run.steps 2e6 \
   --run.envs 16 \
   --run.eval_envs 16 \
   --run.debug False \
   --run.report_every 1800 \
-  --env.drone.render_mode 2d
+  --env.drone.render_mode 3d
