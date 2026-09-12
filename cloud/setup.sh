@@ -50,7 +50,8 @@ fi
 
 echo "==> Installing Python dependencies with CUDA JAX"
 "${PY}" -m pip --disable-pip-version-check install -U pip "setuptools<82" wheel
-"${PY}" -m pip --disable-pip-version-check install "numpy<2"
+# Keep the upstream library unchanged. Its NumPy 2 requirement conflicts with
+# this training stack; install its dependencies before resolving the stack.
 "${PY}" -m pip --disable-pip-version-check install -e "${REPO_ROOT}/third_party/gym-pybullet-drones"
 REQ_FILE="$(mktemp /tmp/dreamerv3-nojax.XXXXXX.txt)"
 grep -vE '^(jax|jaxlib|optax|nvidia-cuda-nvcc-cu12)' \
@@ -58,10 +59,17 @@ grep -vE '^(jax|jaxlib|optax|nvidia-cuda-nvcc-cu12)' \
 # Resolve TensorFlow and the Google API packages together so protobuf stays
 # compatible, including when repairing an environment installed in stages.
 "${PY}" -m pip --disable-pip-version-check install -r "${REQ_FILE}" \
+  "numpy>=1.26.4,<2" \
   "optax==0.2.4" "jax[cuda12]==0.4.33" "nvidia-cuda-nvcc-cu12>=12.8,<13" \
   "tensorflow-cpu<2.16" tensorboard "protobuf<5" \
   google-api-core googleapis-common-protos proto-plus
-"${PY}" -m pip check
+if ! "${PY}" -m pip check; then
+  if [ "${ALLOW_DEPENDENCY_CONFLICTS:-0}" != 1 ]; then
+    echo "Dependency conflicts detected. To proceed with an unverified environment, set ALLOW_DEPENDENCY_CONFLICTS=1." >&2
+    exit 1
+  fi
+  echo "WARNING: Continuing with dependency conflicts; runtime compatibility is not verified." >&2
+fi
 
 # Install on a login node with SKIP_GPU_CHECK=1; validate on an allocated GPU.
 if [ "${SKIP_GPU_CHECK:-0}" = 1 ]; then
