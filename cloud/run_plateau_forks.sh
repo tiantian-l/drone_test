@@ -16,7 +16,7 @@ elif [[ -x "${VENV_PY}" ]]; then
   PY="${VENV_PY}"
   RUNTIME_BIN="${REPO_ROOT}/.venv-gpu/bin"
 else
-  echo "No training Python found. Run cloud/setup_school.sh or cloud/setup_gpu.sh first." >&2
+  echo "No training Python found. Run cloud/setup.sh first." >&2
   exit 1
 fi
 

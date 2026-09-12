@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Train the D-tier navigation task with reference-density moving cylinders.
-# Run from anywhere after: bash cloud/setup_school.sh
+# Run from anywhere after: bash cloud/setup.sh
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -10,7 +10,7 @@ ENV_NAME="${ENV_NAME:-drone}"
 conda_init="${CONDA_ROOT}/etc/profile.d/conda.sh"
 if [[ ! -f "${conda_init}" ]]; then
   echo "Conda initialization script not found: ${conda_init}" >&2
-  echo "Run 'bash cloud/setup_school.sh' first or set CONDA_ROOT." >&2
+  echo "Run 'bash cloud/setup.sh' first or set CONDA_ROOT." >&2
   exit 1
 fi
 

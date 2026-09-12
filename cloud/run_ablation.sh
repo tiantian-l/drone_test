@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Launch A-D ablation training on the SCHOOL machine (non-root Conda env).
-# Run from the repository root after: bash cloud/setup_school.sh
+# Run from the repository root after: bash cloud/setup.sh
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -10,11 +10,11 @@ ENV_NAME="${ENV_NAME:-drone}"
 conda_init="${CONDA_ROOT}/etc/profile.d/conda.sh"
 if [[ ! -f "${conda_init}" ]]; then
   echo "Conda initialization script not found: ${conda_init}" >&2
-  echo "Run 'bash cloud/setup_school.sh' first or set CONDA_ROOT." >&2
+  echo "Run 'bash cloud/setup.sh' first or set CONDA_ROOT." >&2
   exit 1
 fi
 
-# Match cloud/train_school.sh: activate the named environment and always use
+# Match cloud/train.sh: activate the named environment and always use
 # that environment's interpreter instead of a system/user Python.
 # shellcheck disable=SC1090
 source "${conda_init}"

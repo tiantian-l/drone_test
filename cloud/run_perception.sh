@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Launch the perception-encoding ablation on the SCHOOL machine (non-root Conda
-# env). Run from the repository root after: bash cloud/setup_school.sh
+# env). Run from the repository root after: bash cloud/setup.sh
 #
 # Four groups, identical task/optimizer/step-budget, differing only in how the
 # LiDAR is encoded / its resolution:
@@ -18,7 +18,7 @@ ENV_NAME="${ENV_NAME:-drone}"
 conda_init="${CONDA_ROOT}/etc/profile.d/conda.sh"
 if [[ ! -f "${conda_init}" ]]; then
   echo "Conda initialization script not found: ${conda_init}" >&2
-  echo "Run 'bash cloud/setup_school.sh' first or set CONDA_ROOT." >&2
+  echo "Run 'bash cloud/setup.sh' first or set CONDA_ROOT." >&2
   exit 1
 fi
 

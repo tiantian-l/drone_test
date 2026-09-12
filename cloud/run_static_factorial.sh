@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Train the RQ1/RQ2 2x2 static factorial on a Linux GPU host.
-# Supports either cloud/setup_school.sh (Conda) or cloud/setup_gpu.sh (venv).
+# Run after the unified Conda setup: cloud/setup.sh.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -17,7 +17,7 @@ elif [[ -x "${VENV_PY}" ]]; then
   RUNTIME_BIN="${REPO_ROOT}/.venv-gpu/bin"
 else
   echo "No training Python found." >&2
-  echo "Run cloud/setup_school.sh or cloud/setup_gpu.sh first." >&2
+  echo "Run cloud/setup.sh first." >&2
   exit 1
 fi
 

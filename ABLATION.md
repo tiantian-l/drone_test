@@ -28,11 +28,11 @@ formal result.
 On each school computer, install the environment once from the repository root:
 
 ```bash
-bash cloud/setup_school.sh
+bash cloud/setup.sh
 ```
 
 The training scripts then load Conda and activate the `drone` environment
-automatically, just like `cloud/train_school.sh`; manual `conda activate` is not
+automatically, just like `cloud/train.sh`; manual `conda activate` is not
 required. The defaults are `$HOME/miniconda3` and environment name `drone`.
 Override them with `CONDA_ROOT` and `ENV_NAME` if necessary.
 
@@ -272,14 +272,14 @@ mapping and flight controller first.
 RTX Blackwell GPUs with compute capability 12.0 require CUDA 12.8 or newer for
 native compiler support. The project keeps JAX 0.4.33 for DreamerV3 compatibility
 but installs `nvidia-cuda-nvcc-cu12>=12.8,<13`, so XLA uses a Blackwell-capable
-`ptxas`. `cloud/setup_school.sh` now performs a real compiled matrix operation;
+`ptxas`. `cloud/setup.sh` now performs a real compiled matrix operation;
 merely listing `jax.devices()` is not considered a sufficient GPU test.
 
 If an existing environment reports `ptxas too old`, pull the updated repository
 and rerun the idempotent setup script:
 
 ```bash
-bash cloud/setup_school.sh
+bash cloud/setup.sh
 ```
 
 Verify the compiler and JAX execution before restarting a long run:
