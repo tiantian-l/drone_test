@@ -12,7 +12,13 @@ cleanup() { [ -z "${TMP_INSTALLER}" ] || rm -f "${TMP_INSTALLER}"; [ -z "${REQ_F
 trap cleanup EXIT
 
 if [ ! -x "${CONDA_ROOT}/bin/conda" ]; then
-  echo "==> Installing Miniconda into ${CONDA_ROOT} (no root needed)"
+  CONDA_INSTALL_ARGS=(-b -p "${CONDA_ROOT}")
+  if [ -d "${CONDA_ROOT}" ]; then
+    echo "==> Repairing incomplete Miniconda installation at ${CONDA_ROOT}"
+    CONDA_INSTALL_ARGS+=(-u)
+  else
+    echo "==> Installing Miniconda into ${CONDA_ROOT} (no root needed)"
+  fi
   TMP_INSTALLER="$(mktemp /tmp/miniconda.XXXXXX.sh)"
   if command -v curl >/dev/null 2>&1; then
     curl -fsSL "https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh" -o "${TMP_INSTALLER}"
@@ -22,7 +28,7 @@ if [ ! -x "${CONDA_ROOT}/bin/conda" ]; then
     echo "Error: curl or wget is required to download Miniconda." >&2
     exit 1
   fi
-  bash "${TMP_INSTALLER}" -b -p "${CONDA_ROOT}"
+  bash "${TMP_INSTALLER}" "${CONDA_INSTALL_ARGS[@]}"
 else
   echo "==> Reusing existing Miniconda at ${CONDA_ROOT}"
 fi
