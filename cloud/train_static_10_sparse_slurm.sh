@@ -1,6 +1,6 @@
 #!/bin/bash
 # Submit from the repository root: sbatch cloud/train_static_10_sparse_slurm.sh
-#SBATCH --job-name=drone_10_sparse_s0
+#SBATCH --job-name=10_sparse_s0
 #SBATCH --nodes=1
 #SBATCH --gpus=1
 #SBATCH --ntasks=1
@@ -34,7 +34,7 @@ LOG_IMAGE=True \
 VIDEO_EVERY=100 \
 JAX_COMPUTE_DTYPE=bfloat16 \
 bash cloud/run_static_factorial.sh \
-  --run.steps 2e6 \
+  --run.steps 3e6 \
   --run.envs 16 \
   --run.eval_envs 16 \
   --run.debug False \
