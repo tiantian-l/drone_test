@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 #SBATCH --time=06:00:00
-#SBATCH --partition=normal-a100-40
+#SBATCH --partition=normal-a100-80
 #SBATCH --account=eehpc-dev-2026d07-102g
 #SBATCH --output=slurm-%j.out
 
