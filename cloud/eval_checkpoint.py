@@ -50,8 +50,9 @@ def main():
         parallel=True)
     driver.on_step(on_step)
     try:
-        driver.reset(agent.init_policy)
-        driver(lambda *a: agent.policy(*a, mode='eval'), episodes_per_env=quota)
+        with agent.evaluation():
+            driver.reset(agent.init_policy)
+            driver(lambda *a: agent.policy(*a, mode='eval'), episodes_per_env=quota)
     finally:
         driver.close()
     if len(records) != workers * quota:
@@ -61,7 +62,8 @@ def main():
                 for i in range(quota) for w in range(workers)}
     if len(set(seeds)) != len(seeds) or set(seeds) != expected:
         raise RuntimeError('Evaluation map coverage mismatch; inspect episodes.jsonl')
-    summary = {'checkpoint': args.checkpoint, 'dtype': args.dtype, 'episodes': len(records)}
+    summary = {'checkpoint': args.checkpoint, 'dtype': args.dtype, 'episodes': len(records),
+               'evaluation_protocol': 'snapshot_rng0_v1', 'policy_seed_counter_start': 0}
     for key in ['success', 'collision', 'crash', 'timeout']:
         summary[key] = sum(r[key] for r in records) / len(records)
     (output / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
