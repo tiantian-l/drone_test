@@ -23,9 +23,14 @@ EVAL_ROOT="${EVAL_ROOT:-/projects/EEHPC-DEV-2026D07-102/dreamer/logdir/checkpoin
 test -f "$RUN_DIR/config.yaml"
 test -e "$CHECKPOINT"
 nvidia-smi
+eval_args=()
+if [[ -n "${EVAL_MAPS:-}" ]]; then
+  eval_args+=(--eval-maps "$EVAL_MAPS")
+fi
 for repeat in 1 2; do
   "${CONDA_ROOT}/envs/${ENV_NAME}/bin/python" cloud/eval_checkpoint.py \
     --config "$RUN_DIR/config.yaml" --checkpoint "$CHECKPOINT" \
     --dtype "${EVAL_DTYPE:-bfloat16}" \
+    "${eval_args[@]}" \
     --output "$EVAL_ROOT/job_${SLURM_JOB_ID}_${EVAL_DTYPE:-bfloat16}_repeat_${repeat}"
 done
