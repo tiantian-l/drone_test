@@ -30,6 +30,8 @@ import numpy as np
 import pybullet as p
 from gymnasium import Env, spaces
 
+from drone_nav.moving_geometry import advance_cylinders
+
 from gym_pybullet_drones.envs.BaseRLAviary import BaseRLAviary
 from gym_pybullet_drones.utils.enums import DroneModel, Physics, ActionType, ObservationType
 
@@ -121,6 +123,7 @@ class NavigationAviary(BaseRLAviary):
                  dynamic_obstacle_speed_range=(0.3, 1.0),
                  dynamic_obstacle_clear_radius: float = 0.8,
                  dynamic_obstacle_min_separation: float = 0.05,
+                 dynamic_obstacle_motion: str = "boundary",
                  # ---- lidar (3D multi-layer range scan) --------------------
                  lidar_enabled: bool = True,
                  lidar_range: float = 4.0,
@@ -201,6 +204,9 @@ class NavigationAviary(BaseRLAviary):
         # Dynamic obstacles deliberately stay separate from `_obstacle_specs`,
         # which is the static-only input to the BFS feasibility check.
         obstacle_area = 4.0 * float(self.MAP_RANGE[0]) * float(self.MAP_RANGE[1])
+        self.DYNAMIC_OBSTACLE_MOTION = str(dynamic_obstacle_motion)
+        if self.DYNAMIC_OBSTACLE_MOTION not in ("boundary", "collision_reverse"):
+            raise ValueError("dynamic_obstacle_motion must be boundary or collision_reverse")
         self.DYNAMIC_OBSTACLES_ENABLED = bool(dynamic_obstacles_enabled)
         self.DYNAMIC_OBSTACLE_DENSITY = float(dynamic_obstacle_density)
         self.N_DYNAMIC_OBSTACLES = int(np.floor(
@@ -462,9 +468,11 @@ class NavigationAviary(BaseRLAviary):
         start_xy = np.asarray(self.INIT_XYZS[0][:2], dtype=np.float32)
         goal_xy = np.asarray(self.TARGET_POS[:2], dtype=np.float32)
 
+        diameters = list(self.DYNAMIC_OBSTACLE_DIAMETERS)
+        if self.DYNAMIC_OBSTACLE_MOTION == "collision_reverse":
+            self.np_random.shuffle(diameters)
         for index in range(self.N_DYNAMIC_OBSTACLES):
-            diameter = self.DYNAMIC_OBSTACLE_DIAMETERS[
-                index % len(self.DYNAMIC_OBSTACLE_DIAMETERS)]
+            diameter = diameters[index % len(diameters)]
             radius = diameter / 2.0
             placed = False
             for _ in range(300):
@@ -481,6 +489,12 @@ class NavigationAviary(BaseRLAviary):
 
                 # Static boxes use their circumscribed radii here. This is
                 # intentionally conservative and prevents initial overlap.
+                if self.DYNAMIC_OBSTACLE_MOTION == "collision_reverse" and any(
+                    abs(x - ox) <= wx / 2 + radius + self.DYNAMIC_OBSTACLE_MIN_SEPARATION
+                    and abs(y - oy) <= wy / 2 + radius + self.DYNAMIC_OBSTACLE_MIN_SEPARATION
+                    for ox, oy, wx, wy, _height in self._obstacle_specs
+                ):
+                    continue
                 if any(
                     np.linalg.norm(position - np.array([ox, oy])) <
                     radius + 0.5 * np.hypot(wx, wy) +
@@ -489,7 +503,9 @@ class NavigationAviary(BaseRLAviary):
                 ):
                     continue
                 if any(
-                    np.linalg.norm(position - np.array([spec[0], spec[1]])) <
+                    (np.max(np.abs(position - np.array([spec[0], spec[1]])))
+                     if self.DYNAMIC_OBSTACLE_MOTION == "collision_reverse" else
+                     np.linalg.norm(position - np.array([spec[0], spec[1]]))) <
                     radius + spec[2] + self.DYNAMIC_OBSTACLE_MIN_SEPARATION
                     for spec in self._dynamic_obstacle_specs
                 ):
@@ -505,7 +521,8 @@ class NavigationAviary(BaseRLAviary):
                 placed = True
                 break
             if not placed:
-                break
+                raise RuntimeError(
+                    f"Could only place {index}/{self.N_DYNAMIC_OBSTACLES} dynamic obstacles")
 
     ################################################################################
 
@@ -718,8 +735,17 @@ class NavigationAviary(BaseRLAviary):
         return super().step(action)
 
     def _advance_dynamic_obstacles(self, dt):
-        """Advance kinematic cylinders with deterministic boundary reflection."""
+        """Advance cylinders with the configured deterministic motion model."""
         if not self._dynamic_obstacle_ids:
+            return
+        if self.DYNAMIC_OBSTACLE_MOTION == "collision_reverse":
+            self._dynamic_obstacle_specs = advance_cylinders(
+                self._dynamic_obstacle_specs, self._obstacle_specs,
+                self.MAP_RANGE[:2], self.DYNAMIC_OBSTACLE_MIN_SEPARATION, dt)
+            for spec, body_id in zip(self._dynamic_obstacle_specs, self._dynamic_obstacle_ids):
+                p.resetBasePositionAndOrientation(
+                    body_id, [spec[0], spec[1], spec[3] / 2],
+                    [0., 0., 0., 1.], physicsClientId=self.CLIENT)
             return
         mx, my = float(self.MAP_RANGE[0]), float(self.MAP_RANGE[1])
         for spec, body_id in zip(
@@ -992,6 +1018,13 @@ class NavigationAviary(BaseRLAviary):
         success = dist < self.GOAL_TOLERANCE
         crash = self._is_crash(s)
         collision = self._is_collision()
+        def collides_with(ids):
+            return collision and any(
+                pt[8] < self.COLLISION_DISTANCE
+                for bid in ids
+                for pt in p.getClosestPoints(
+                    int(self.DRONE_IDS[0]), bid, distance=self.COLLISION_DISTANCE,
+                    physicsClientId=self.CLIENT))
         # Closest obstacle distance (m) as sensed by the lidar this step, and
         # its running minimum over the episode. With no obstacles in view the
         # scan is all ones -> LIDAR_RANGE. Tracking the episode MIN shows
@@ -1010,7 +1043,10 @@ class NavigationAviary(BaseRLAviary):
             "is_success": bool(success),     # -> log/last/success
             "is_crash": bool(crash),         # -> log/last/crash
             "is_collision": bool(collision), # -> log/last/collision
-            "is_timeout": timeout,           # -> log/last/timeout
+            "is_timeout": timeout,
+            "static_collision": bool(collides_with(self._static_obstacle_ids)),
+            "dynamic_collision": bool(collides_with(self._dynamic_obstacle_ids)),
+            "dynamic_count": len(self._dynamic_obstacle_ids),
             "final_distance": dist,          # -> log/last/final_distance
             "min_distance": float(self._min_dist),  # -> log/min/min_distance
             "min_lidar_dist": float(self._min_lidar),  # -> log/min/min_lidar_dist
@@ -1103,8 +1139,8 @@ class NavigationAviary(BaseRLAviary):
                     physicsClientId=self.CLIENT)
                 self._dynamic_obstacle_ids.append(bid)
                 self._obstacle_ids.append(bid)
-            except Exception:
-                pass
+            except Exception as exc:
+                raise RuntimeError("Failed to create dynamic collision body") from exc
 
     @property
     def video_shape(self):
