@@ -1,6 +1,7 @@
 #!/bin/bash
-# Submit from the repository root: sbatch cloud/train_static_slurm.sh
-#SBATCH --job-name=20_sparse_s0
+# Submit from the repository root: sbatch cloud/train_static_slurm.sh <seed>
+# Example: sbatch --job-name=20_sparse_s1 cloud/train_static_slurm.sh 1
+#SBATCH --job-name=20_sparse
 #SBATCH --nodes=1
 #SBATCH --gpus=1
 #SBATCH --ntasks=1
@@ -11,9 +12,14 @@
 #SBATCH --output=slurm-%j.out
 
 set -euo pipefail
+if [[ $# -ne 1 || ! "$1" =~ ^[0-9]+$ ]]; then
+  echo "Usage: sbatch cloud/train_static_slurm.sh <seed> (non-negative integer, e.g. 0 or 1)" >&2
+  exit 2
+fi
+training_seed="$1"
 cd "${SLURM_SUBMIT_DIR:?Submit with sbatch from the repository root}"
 if [ ! -f cloud/run_static_factorial.sh ]; then
-  echo "Submit from the repository root: sbatch cloud/train_static_slurm.sh" >&2
+  echo "Submit from the repository root: sbatch cloud/train_static_slurm.sh <seed>" >&2
   exit 1
 fi
 
@@ -28,7 +34,7 @@ export TF_NUM_INTEROP_THREADS=1
 nvidia-smi
 
 CONDITIONS=20_sparse \
-SEEDS=0 \
+SEEDS="${training_seed}" \
 LOG_ROOT=/projects/EEHPC-DEV-2026D07-102/dreamer/logdir/drone_static_factorial_a100 \
 LOG_IMAGE=True \
 VIDEO_EVERY=100 \
