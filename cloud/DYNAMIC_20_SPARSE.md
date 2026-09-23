@@ -71,6 +71,8 @@ sbatch cloud/train_dynamic_20_sparse_slurm.sh
 
 `STEPS` 是动态 run 的**总目标步数**，不是追加步数。resume 读取该目录保存的完整配置和 checkpoint/replay，不再读取静态初始化 checkpoint；不要删除 replay 文件。resume 模式不使用命令行附加配置参数。不可对同一 LOGDIR 同时提交两个任务。
 
+续训时可通过环境变量 `RESUME_BATCH_SIZE=32` 显式覆盖 batch size；不设置时沿用保存值。`batch_length`、学习率和 `train_ratio` 不变。16→32 会让每次更新的数据量翻倍，在相同 train ratio 下更新次数约减半，并增加显存需求；不保证提速或改善收敛。加载后会重新编译，新 batch size 会写入该 run 的 config.yaml，后续续训沿用新值。此选项需要同步更新后的 `cloud/resume_dynamic.py`，尚未在 GPU 上验证。
+
 每 300 秒保存 rolling checkpoint，墙钟到期后重提续跑；可能丢失最后一次保存后的最多约 5 分钟工作，I/O/评估可能延迟保存。当前训练循环正常结束也不保证立刻额外保存一次 rolling checkpoint；best checkpoints 按评估保存。不要把 Slurm 的 6 小时资源请求误认为 3M 步一定能跑完。
 
 录像默认关闭以减少采样成本。需要检查行为可设置 `LOG_IMAGE=True`，worker 0 每 100 回合录像一次。若第一阶段太难，在单独实验目录传 `--env.drone.dynamic_obstacle_density 0.01` 做 4 个障碍物实验；不要修改主设置的基线含义。
