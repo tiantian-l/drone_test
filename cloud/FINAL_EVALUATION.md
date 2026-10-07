@@ -123,3 +123,33 @@ bash -n cloud/eval_final_slurm.sh
 这些检查覆盖清单隔离性和完整性、地图覆盖、统计分母、checkpoint 路径解析，以及初始几何记录。它们不能替代集群上的 PyBullet 地图生成和真实 checkpoint 评估。建议先为每个场景生成实际地图，再评估选定的 checkpoint；使用相同设置重复运行，比较地图几何哈希和逐地图结果。
 
 These checks cover manifest isolation and integrity, map coverage, summary denominators, checkpoint path resolution, and initial geometry recording. They do not replace PyBullet map generation and real checkpoint evaluation on the cluster. First materialize each scenario, then evaluate the selected checkpoint; repeat with the same setup and compare geometry hashes and per-map outcomes.
+
+## 6. 结果文件命名 / Result file naming
+
+结果目录简化为 `final_eval/<评估场景>/job_<作业编号>/`。来源策略和 checkpoint 标识直接写入文件名，格式为 `<POLICY_LABEL>__<CHECKPOINT_NAME>__<文件类型>`。上文的 `summary.csv`、`episodes.jsonl` 等是文件类型简称，实际文件均带此前缀；逐地图 JSON 子目录也带相同前缀。
+
+Output directories use `final_eval/<evaluation_scene>/job_<job_id>/`. Source policy and checkpoint identity appear directly in filenames: `<POLICY_LABEL>__<CHECKPOINT_NAME>__<artifact>`. Names such as `summary.csv` and `episodes.jsonl` above refer to artifact types; actual filenames and the per-map JSON subdirectory carry this prefix.
+
+例如 `20_sparse` 的 seed 0、220 万步 checkpoint 在 `10_dense` 上评估：
+
+Example: evaluating the 2.2M-step checkpoint from `20_sparse`, seed 0, on `10_dense`:
+
+```text
+final_eval/10_dense/job_12345/
+  20_sparse_seed_0__step_0002200000_success_0.9531__summary.csv
+  20_sparse_seed_0__step_0002200000_success_0.9531__summary.json
+  20_sparse_seed_0__step_0002200000_success_0.9531__episodes.csv
+  20_sparse_seed_0__step_0002200000_success_0.9531__episodes.jsonl
+  20_sparse_seed_0__step_0002200000_success_0.9531__maps.jsonl
+  20_sparse_seed_0__step_0002200000_success_0.9531__maps/
+  20_sparse_seed_0__step_0002200000_success_0.9531__config.yaml
+  20_sparse_seed_0__step_0002200000_success_0.9531__manifest.json
+```
+
+`POLICY_LABEL` 默认从训练目录末两级名称推断，例如 `20_sparse_seed_0`。可以设置 `export POLICY_LABEL=4090_20_sparse_seed_0` 来标明硬件或实验版本。标签只影响命名和记录，不改变场景。checkpoint 使用解析后的名称，去掉 `.ckpt` 后缀；无 checkpoint 的地图生成模式使用 `maps_only`。不安全的文件名字符会替换为下划线，超长前缀会缩短并附加哈希。
+
+`POLICY_LABEL` defaults to the last two components of the training directory, e.g. `20_sparse_seed_0`. Set `export POLICY_LABEL=4090_20_sparse_seed_0` to include hardware or experiment identity. The label affects naming and metadata only. The resolved checkpoint name is used without `.ckpt`; map-only mode uses `maps_only`. Unsafe filename characters are replaced with underscores; long prefixes are shortened with a hash suffix.
+
+汇总仍保存 `scenario`、`policy_label`、`source_config`、`checkpoint` 和 `checkpoint_sha256`。已有输出不会被移动或重命名。第四个输出目录参数仍可覆盖默认目录。
+
+Summaries retain `scenario`, `policy_label`, `source_config`, `checkpoint`, and `checkpoint_sha256`. Existing results are not moved or renamed. The fourth output-directory argument still overrides the default location.

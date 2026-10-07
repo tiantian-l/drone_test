@@ -4,6 +4,7 @@ import csv
 import hashlib
 import importlib.metadata
 import json
+import re
 import subprocess
 from functools import partial
 from pathlib import Path
@@ -18,6 +19,15 @@ def file_sha256(path):
         for chunk in iter(lambda: handle.read(8 * 1024 * 1024), b''):
             result.update(chunk)
     return result.hexdigest()
+
+
+def result_prefix(policy_label, checkpoint):
+    name = Path(checkpoint).name.removesuffix('.ckpt') if checkpoint else 'maps_only'
+    raw = f'{policy_label}__{name}'
+    safe = re.sub(r'[^a-zA-Z0-9_.-]', '_', raw)
+    if len(safe) > 180:
+        safe = safe[:160] + '_' + hashlib.sha256(raw.encode()).hexdigest()[:12]
+    return safe
 
 
 def resolve_checkpoint(path):
@@ -69,6 +79,7 @@ class RecordingEnv:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', required=True, help='Selected policy run config.yaml')
+    parser.add_argument('--policy-label', help='Source policy label (metadata only, does not change the test scenario)')
     parser.add_argument('--checkpoint', help='Agent checkpoint, complete generation, or rolling ckpt directory')
     parser.add_argument('--manifest', required=True)
     parser.add_argument('--output', type=Path, required=True)
@@ -79,6 +90,12 @@ def main():
         parser.error('--checkpoint is required unless --maps-only is used')
     manifest = validate_manifest(json.loads(Path(args.manifest).read_text()))
     checkpoint = None if args.maps_only else resolve_checkpoint(args.checkpoint)
+    policy_label = args.policy_label or (
+        Path(args.config).resolve().parent.parent.name + '_' + Path(args.config).resolve().parent.name)
+    prefix = result_prefix(policy_label, checkpoint)
+    def artifact(name):
+        return args.output / f'{prefix}__{name}'
+
     checkpoint_hash = (file_sha256(checkpoint / 'agent.pkl' if checkpoint.is_dir() else checkpoint)
                        if checkpoint else None)
 
@@ -117,10 +134,10 @@ def main():
     if validation_seeds.intersection(manifest['map_seeds']):
         raise ValueError('Final test overlaps the supplied run validation seeds')
     args.output.mkdir(parents=True, exist_ok=False)
-    map_dir = args.output.resolve() / 'maps'
+    map_dir = artifact('maps').resolve()
     map_dir.mkdir()
-    config.save(str(args.output / 'config.yaml'))
-    (args.output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+    config.save(str(artifact('config.yaml')))
+    (artifact('manifest.json')).write_text(json.dumps(manifest, indent=2) + '\n')
     factories = [partial(make_recording_env, config, i, str(map_dir)) for i in range(16)]
     if args.maps_only:
         for factory in factories:
@@ -137,7 +154,7 @@ def main():
         agent = make_agent(config)
         elements.checkpoint.load(str(checkpoint), {'agent': agent.load})
         records, _ = evaluate(agent, factories, 16, parallel=True)
-        (args.output / 'episodes.jsonl').write_text(''.join(json.dumps(r) + '\n' for r in records))
+        (artifact('episodes.jsonl')).write_text(''.join(json.dumps(r) + '\n' for r in records))
         validate_coverage(records, manifest)
     maps = [json.loads((map_dir / f'{seed}.json').read_text()) for seed in manifest['map_seeds']]
     if len(list(map_dir.glob('*.json'))) != 256:
@@ -145,13 +162,15 @@ def main():
     geometry = [(r['start'], r['goal'], r['static_boxes']) for r in maps]
     if len({json.dumps(x) for x in geometry}) != 256:
         raise ValueError('Duplicate map geometry')
-    (args.output / 'maps.jsonl').write_text(''.join(json.dumps(r) + '\n' for r in maps))
+    (artifact('maps.jsonl')).write_text(''.join(json.dumps(r) + '\n' for r in maps))
     summary = summarize(records, config.env.drone.ctrl_freq) if records else {'maps': 256}
     summary.update(scenario=manifest['scenario'], manifest_sha256=manifest['sha256'],
+                   policy_label=policy_label, result_prefix=prefix,
+                   source_config=str(Path(args.config).resolve()),
                    evaluation_protocol=PROTOCOL, checkpoint=str(checkpoint) if checkpoint else None,
                    checkpoint_sha256=checkpoint_hash,
                    dtype=args.dtype, geometry_sha256=hashlib.sha256(
-                       (args.output / 'maps.jsonl').read_bytes()).hexdigest())
+                       (artifact('maps.jsonl')).read_bytes()).hexdigest())
     summary['package_versions'] = {}
     for package in ('numpy', 'gymnasium', 'pybullet', 'jax', 'jaxlib', 'elements', 'gym-pybullet-drones'):
         try:
@@ -159,10 +178,10 @@ def main():
         except importlib.metadata.PackageNotFoundError:
             summary['package_versions'][package] = 'unknown'
     summary['git_revision'] = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
-    (args.output / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+    (artifact('summary.json')).write_text(json.dumps(summary, indent=2) + '\n')
     if records:
         for filename, rows in [('episodes.csv', records), ('summary.csv', [summary])]:
-            with (args.output / filename).open('w', newline='') as handle:
+            with artifact(filename).open('w', newline='') as handle:
                 writer = csv.DictWriter(handle, fieldnames=sorted(set().union(*(r.keys() for r in rows))))
                 writer.writeheader()
                 writer.writerows(rows)

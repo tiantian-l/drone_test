@@ -20,9 +20,19 @@ case "$scenario" in
   10_sparse|10_dense|20_sparse|20_dense|20_sparse_dynamic) ;;
   *) echo "Unknown test scenario: $scenario" >&2; exit 2 ;;
 esac
-run_dir="$2"
-checkpoint="$3"
+run_dir="${2%/}"
+checkpoint="${3%/}"
+# Infer the source label from RUN_DIR/<seed>; override for custom layouts.
+source_parent="$(dirname "$run_dir")"
+policy_label="${POLICY_LABEL:-$(basename "$source_parent")_$(basename "$run_dir")}"
+if [[ ! "$policy_label" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
+  echo "POLICY_LABEL must contain only letters, digits, underscores, dots, or hyphens, starting with a letter or digit." >&2
+  exit 2
+fi
 output="${4:-/projects/EEHPC-DEV-2026D07-102/dreamer/logdir/final_eval/${scenario}/job_${SLURM_JOB_ID:?Run via sbatch}}"
+echo "Evaluation scenario: $scenario; source policy: $policy_label"
+echo "Checkpoint: $checkpoint"
+echo "Results: $output"
 export CONDA_ROOT="${CONDA_ROOT:-/projects/EEHPC-DEV-2026D07-102/dreamer/dependency/miniconda3}"
 export ENV_NAME="${ENV_NAME:-drone}"
 export PYTHONNOUSERSITE=1
@@ -36,4 +46,5 @@ test -e "$checkpoint"
 nvidia-smi
 exec "${CONDA_ROOT}/envs/${ENV_NAME}/bin/python" cloud/eval_final.py \
   --config "$run_dir/config.yaml" --checkpoint "$checkpoint" \
+  --policy-label "$policy_label" \
   --manifest "$manifest" --output "$output" --dtype "${EVAL_DTYPE:-bfloat16}"
