@@ -1,5 +1,6 @@
 """Evaluate a selected checkpoint on a frozen final-test manifest (or materialize maps only)."""
 import argparse
+import copy
 import csv
 import hashlib
 import importlib.metadata
@@ -11,6 +12,18 @@ from pathlib import Path
 
 from final_test_suite import ROOT, validate_manifest, validate_coverage, summarize
 from checkpoint_step import resolve_generation
+
+
+def with_test_environment(saved, env_changes):
+    """Add test-only environment keys before constructing the strict Config.
+
+    Older runs predate some dynamic obstacle options. Config.update() cannot
+    add those keys. Keep the original validation schedule and policy settings
+    untouched; only the copied evaluation environment receives the overrides.
+    """
+    result = copy.deepcopy(saved)
+    result['env']['drone'].update(copy.deepcopy(env_changes))
+    return result
 
 
 def file_sha256(path):
@@ -106,8 +119,7 @@ def main():
     from embodied.run.evaluation import evaluate, PROTOCOL
     reader = yaml.YAML(typ='safe')
     saved = reader.load(Path(args.config).read_text())
-    config = elements.Config(saved)
-    if config.task != 'drone_nav':
+    if saved['task'] != 'drone_nav':
         raise ValueError('Expected a drone_nav policy configuration')
     presets = reader.load((ROOT / 'third_party/dreamerv3/dreamerv3/configs.yaml').read_text())
     # Preserve policy architecture/perception, but fix task geometry and dynamics.
@@ -123,7 +135,7 @@ def main():
                 'collision_distance', 'path_clearance', 'path_cell_size',
                 'dynamic_obstacle_clear_radius'):
         env_changes[key] = presets['defaults']['env']['drone'][key]
-    config = config.update({'env.drone.' + k: v for k, v in env_changes.items()})
+    config = elements.Config(with_test_environment(saved, env_changes))
     config = config.update({'logdir': str(args.output.resolve()), 'run.eval_envs': 16,
                             'run.eval_eps': 256, 'jax.platform': 'cuda',
                             'jax.compute_dtype': args.dtype})

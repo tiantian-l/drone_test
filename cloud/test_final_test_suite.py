@@ -6,10 +6,33 @@ import tempfile
 import unittest
 
 from final_test_suite import SCENARIOS, build_manifest, validate_manifest, validate_coverage, summarize, digest
-from eval_final import resolve_checkpoint, RecordingEnv
+from eval_final import resolve_checkpoint, RecordingEnv, with_test_environment
 
 
 class FinalSuiteTest(unittest.TestCase):
+    def test_legacy_config_missing_dynamic_keys(self):
+        saved = {
+            'task': 'drone_nav', 'agent': {'encoder': {'units': 128}},
+            'batch_size': 32,
+            'env': {'drone': {'eval_seed_base': 190000, 'perception': 'split',
+                              'lidar_vbeams': 8, 'n_obstacles': 44}},
+        }
+        original = copy.deepcopy(saved)
+        for enabled, motion in ((False, 'boundary'), (True, 'collision_reverse')):
+            changes = {'dynamic_obstacle_motion': motion,
+                       'dynamic_obstacles_enabled': enabled,
+                       'dynamic_obstacle_diameters': [.25, .5, .75, 1.0],
+                       'eval_seed_base': 1000000}
+            result = with_test_environment(saved, changes)
+            self.assertEqual(result['env']['drone']['dynamic_obstacle_motion'], motion)
+            self.assertEqual(result['env']['drone']['dynamic_obstacles_enabled'], enabled)
+            self.assertEqual(result['agent'], saved['agent'])
+            self.assertEqual(result['batch_size'], 32)
+            self.assertEqual(result['env']['drone']['perception'], 'split')
+            result['env']['drone']['dynamic_obstacle_diameters'].append(2)
+            self.assertEqual(len(changes['dynamic_obstacle_diameters']), 4)
+            self.assertEqual(saved, original)
+
     def test_disjoint_and_stable(self):
         used = set(range(100000, 210128))
         for scene in SCENARIOS:
