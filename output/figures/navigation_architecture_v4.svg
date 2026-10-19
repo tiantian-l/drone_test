@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2200" height="1250" viewBox="0 0 2200 1250">
+<defs><marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#334155"/></marker></defs>
+<rect width="2200" height="1250" fill="white"/><g font-family="Arial" fill="#172b46">
+<rect x="30" y="110" width="310" height="650" rx="18" fill="#f5f1fb" stroke="#8965b2" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="185" y="150" font-size="26" font-weight="bold" text-anchor="middle">Observations</text>
+<rect x="49" y="172" width="272" height="334" rx="18" fill="#ffffff" stroke="#c7b7dd" stroke-width="2" />
+<circle cx="185" cy="282" r="94" fill="none" stroke="#a78bca" stroke-dasharray="5 5"/>
+<g stroke="#a78bca" stroke-width="1.5">
+<path d="M185 188V376M91 282H279M119 216L251 348M119 348L251 216M149 195L221 369M98 246L272 318M98 318L272 246M149 369L221 195"/>
+</g>
+<g stroke="#334155" stroke-width="7"><path d="M158 255L212 309M158 309L212 255"/></g>
+<g fill="#d9e2eb" stroke="#334155" stroke-width="2"><circle cx="156" cy="253" r="15"/><circle cx="214" cy="253" r="15"/><circle cx="156" cy="311" r="15"/><circle cx="214" cy="311" r="15"/><rect x="173" y="263" width="24" height="38" rx="7"/></g>
+
+<text x="185" y="410" font-size="22"  text-anchor="middle">360° horizontal LiDAR</text>
+<text x="185" y="442" font-size="21"  text-anchor="middle">8 × 72 rays (576D)</text>
+<text x="185" y="474" font-size="20"  text-anchor="middle">Ray-hit fractions in [0, 1]</text>
+<rect x="49" y="530" width="272" height="200" rx="18" fill="#ffffff" stroke="#c7b7dd" stroke-width="2" />
+<text x="185" y="567" font-size="23" font-weight="bold" text-anchor="middle">State vector (9D)</text>
+<text x="185" y="610" font-size="20"  text-anchor="middle">Relative goal position (3D)</text>
+<text x="185" y="649" font-size="20"  text-anchor="middle">World-frame velocity (3D)</text>
+<text x="185" y="688" font-size="20"  text-anchor="middle">Roll, pitch, yaw (3D)</text>
+<rect x="390" y="190" width="350" height="220" rx="18" fill="#e4effc" stroke="#5591c8" stroke-width="2" />
+<text x="565" y="231" font-size="25" font-weight="bold" text-anchor="middle">LiDAR Encoder Branch</text>
+<text x="412" y="274" font-size="20"  >Center: L_t − 0.5</text>
+<text x="412" y="308" font-size="20"  >3 × azimuth CNN + circular padding</text>
+<text x="412" y="342" font-size="20"  >RMSNorm + SiLU</text>
+<text x="412" y="376" font-size="20" font-weight="bold" >LiDAR embedding: 512D</text>
+<rect x="390" y="520" width="350" height="220" rx="18" fill="#e4effc" stroke="#5591c8" stroke-width="2" />
+<text x="565" y="561" font-size="25" font-weight="bold" text-anchor="middle">State Encoder Branch</text>
+<text x="412" y="603" font-size="20"  >Preprocess: symlog(x)</text>
+<text x="412" y="637" font-size="20"  >2-layer MLP (128 units)</text>
+<text x="412" y="671" font-size="20"  >RMSNorm + SiLU</text>
+<text x="412" y="705" font-size="20" font-weight="bold" >State embedding: 128D</text>
+<rect x="790" y="385" width="205" height="220" rx="18" fill="#e0f5f0" stroke="#32998a" stroke-width="2" />
+<text x="892" y="425" font-size="25" font-weight="bold" text-anchor="middle">Concatenate</text>
+<text x="892" y="470" font-size="20"  text-anchor="middle">[e_state, e_lidar]</text>
+<text x="892" y="524" font-size="21"  text-anchor="middle">Observation</text>
+<text x="892" y="557" font-size="20" font-weight="bold" text-anchor="middle">embedding: 640D</text>
+<rect x="1045" y="190" width="380" height="550" rx="18" fill="#e0f5f0" stroke="#32998a" stroke-width="2" />
+<text x="1235" y="230" font-size="26" font-weight="bold" text-anchor="middle">World Model</text>
+<text x="1070" y="279" font-size="24" font-weight="bold" >RSSM</text>
+<text x="1070" y="317" font-size="20"  >History + observation embedding</text>
+<text x="1070" y="354" font-size="20"  >Deterministic recurrent state h_t</text>
+<text x="1070" y="391" font-size="20"  >Discrete stochastic state z_t</text>
+<text x="1070" y="478" font-size="24" font-weight="bold" >Decoders and predictors</text>
+<text x="1070" y="521" font-size="20"  >Reconstruct LiDAR and state</text>
+<text x="1070" y="558" font-size="20"  >Predict reward</text>
+<text x="1070" y="595" font-size="20"  >Predict continuation probability</text>
+<rect x="1480" y="190" width="250" height="220" rx="18" fill="#e4effc" stroke="#5591c8" stroke-width="2" />
+<text x="1605" y="232" font-size="26" font-weight="bold" text-anchor="middle">Actor–Critic</text>
+<text x="1503" y="277" font-size="20"  >Actor: policy network</text>
+<text x="1503" y="311" font-size="20"  >Critic: value network</text>
+<text x="1503" y="359" font-size="21"  >Input: (h_t, z_t)</text>
+<rect x="1480" y="510" width="250" height="230" rx="18" fill="#fff2df" stroke="#d79a43" stroke-width="2" />
+<text x="1605" y="552" font-size="26" font-weight="bold" text-anchor="middle">Action (4D)</text>
+<text x="1605" y="598" font-size="22"  text-anchor="middle">[dₜˣ, dₜʸ, dₜᶻ, uₜ]</text>
+<text x="1605" y="650" font-size="22"  text-anchor="middle">Velocity direction</text>
+<text x="1605" y="685" font-size="22"  text-anchor="middle">+ speed scale</text>
+<rect x="1800" y="110" width="370" height="650" rx="18" fill="#f0f7fb" stroke="#4383a9" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="1985" y="151" font-size="25" font-weight="bold" text-anchor="middle">PyBullet Environment</text>
+<text x="1985" y="189" font-size="25" font-weight="bold" text-anchor="middle">and Controller</text>
+<text x="1985" y="237" font-size="21"  text-anchor="middle">PID closed-loop control</text>
+<text x="1985" y="270" font-size="21"  text-anchor="middle">Motor RPM → UAV dynamics</text>
+<path d="M1820 460L1948 373L2145 488L2020 592Z" fill="#e8eef3" stroke="#bdcbd8" stroke-width="1.2"/><path d="M1852 438.25L2051.25 566M1870 493L1997.25 401.75" stroke="#d1dde6" stroke-width="1"/><path d="M1884 416.5L2082.5 540M1920 526L2046.5 430.5" stroke="#d1dde6" stroke-width="1"/><path d="M1916 394.75L2113.75 514M1970 559L2095.75 459.25" stroke="#d1dde6" stroke-width="1"/><path d="M1971 354.5L1949 367.7L1949 433.7L1971 420.5Z" fill="#8091a1" stroke="#718096" stroke-width="1.2"/><path d="M1949 367.7L1922 354.2L1922 420.2L1949 433.7Z" fill="#9cabb8" stroke="#718096" stroke-width="1.2"/><path d="M1944 341L1971 354.5L1949 367.7L1922 354.2Z" fill="#c4cfd8" stroke="#718096" stroke-width="1.2"/><path d="M2058 381.5L2033 396.5L2033 481.5L2058 466.5Z" fill="#8091a1" stroke="#718096" stroke-width="1.2"/><path d="M2033 396.5L2000 380L2000 465L2033 481.5Z" fill="#9cabb8" stroke="#718096" stroke-width="1.2"/><path d="M2025 365L2058 381.5L2033 396.5L2000 380Z" fill="#c4cfd8" stroke="#718096" stroke-width="1.2"/><path d="M1892 420.5L1872 432.5L1872 490.5L1892 478.5Z" fill="#8091a1" stroke="#718096" stroke-width="1.2"/><path d="M1872 432.5L1845 419L1845 477L1872 490.5Z" fill="#9cabb8" stroke="#718096" stroke-width="1.2"/><path d="M1865 407L1892 420.5L1872 432.5L1845 419Z" fill="#c4cfd8" stroke="#718096" stroke-width="1.2"/><path d="M2120 457L2097 470.79999999999995L2097 534.8L2120 521Z" fill="#8091a1" stroke="#718096" stroke-width="1.2"/><path d="M2097 470.79999999999995L2069 456.79999999999995L2069 520.8L2097 534.8Z" fill="#9cabb8" stroke="#718096" stroke-width="1.2"/><path d="M2092 443L2120 457L2097 470.79999999999995L2069 456.79999999999995Z" fill="#c4cfd8" stroke="#718096" stroke-width="1.2"/><path d="M2017 492L1991 507.6L1991 572.6L2017 557Z" fill="#8091a1" stroke="#718096" stroke-width="1.2"/><path d="M1991 507.6L1955 489.6L1955 554.6L1991 572.6Z" fill="#9cabb8" stroke="#718096" stroke-width="1.2"/><path d="M1981 474L2017 492L1991 507.6L1955 489.6Z" fill="#c4cfd8" stroke="#718096" stroke-width="1.2"/><path d="M2014 468L2013.67 469.76L2012.71 471.44L2011.13 473L2009.02 474.36L2006.44 475.48L2003.51 476.31L2000.32 476.83L1997 477L1993.68 476.83L1990.49 476.31L1987.56 475.48L1984.98 474.36L1982.87 473L1981.29 471.44L1980.33 469.76L1980 468L1980.33 466.24L1981.29 464.56L1982.87 463L1984.98 461.64L1987.56 460.52L1990.49 459.69L1993.68 459.17L1997 459L2000.32 459.17L2003.51 459.69L2006.44 460.52L2009.02 461.64L2011.13 463L2012.71 464.56L2013.67 466.24Z" fill="#c5ced5" stroke="#c5ced5" stroke-width="1.2"/><path d="M1982 468L2012 468L2012 426L1982 426Z" fill="#e9a246" stroke="#cb8730" stroke-width="1.2"/><path d="M2012 468L2011.71 469.56L2010.86 471.06L2009.47 472.44L2007.61 473.66L2005.33 474.65L2002.74 475.39L1999.93 475.85L1997 476L1994.07 475.85L1991.26 475.39L1988.67 474.65L1986.39 473.66L1984.53 472.44L1983.14 471.06L1982.29 469.56L1982 468L1982.29 466.44L1983.14 464.94L1984.53 463.56L1986.39 462.34L1988.67 461.35L1991.26 460.61L1994.07 460.15L1997 460L1999.93 460.15L2002.74 460.61L2005.33 461.35L2007.61 462.34L2009.47 463.56L2010.86 464.94L2011.71 466.44Z" fill="#e9a246" stroke="#cb8730" stroke-width="1.2"/><path d="M2012 426L2011.71 427.56L2010.86 429.06L2009.47 430.44L2007.61 431.66L2005.33 432.65L2002.74 433.39L1999.93 433.85L1997 434L1994.07 433.85L1991.26 433.39L1988.67 432.65L1986.39 431.66L1984.53 430.44L1983.14 429.06L1982.29 427.56L1982 426L1982.29 424.44L1983.14 422.94L1984.53 421.56L1986.39 420.34L1988.67 419.35L1991.26 418.61L1994.07 418.15L1997 418L1999.93 418.15L2002.74 418.61L2005.33 419.35L2007.61 420.34L2009.47 421.56L2010.86 422.94L2011.71 424.44Z" fill="#ffd083" stroke="#cb8730" stroke-width="1.2"/><path d="M2067 552L2066.67 553.76L2065.71 555.44L2064.13 557L2062.02 558.36L2059.44 559.48L2056.51 560.31L2053.32 560.83L2050 561L2046.68 560.83L2043.49 560.31L2040.56 559.48L2037.98 558.36L2035.87 557L2034.29 555.44L2033.33 553.76L2033 552L2033.33 550.24L2034.29 548.56L2035.87 547L2037.98 545.64L2040.56 544.52L2043.49 543.69L2046.68 543.17L2050 543L2053.32 543.17L2056.51 543.69L2059.44 544.52L2062.02 545.64L2064.13 547L2065.71 548.56L2066.67 550.24Z" fill="#c5ced5" stroke="#c5ced5" stroke-width="1.2"/><path d="M2035 552L2065 552L2065 507L2035 507Z" fill="#e9a246" stroke="#cb8730" stroke-width="1.2"/><path d="M2065 552L2064.71 553.56L2063.86 555.06L2062.47 556.44L2060.61 557.66L2058.33 558.65L2055.74 559.39L2052.93 559.85L2050 560L2047.07 559.85L2044.26 559.39L2041.67 558.65L2039.39 557.66L2037.53 556.44L2036.14 555.06L2035.29 553.56L2035 552L2035.29 550.44L2036.14 548.94L2037.53 547.56L2039.39 546.34L2041.67 545.35L2044.26 544.61L2047.07 544.15L2050 544L2052.93 544.15L2055.74 544.61L2058.33 545.35L2060.61 546.34L2062.47 547.56L2063.86 548.94L2064.71 550.44Z" fill="#e9a246" stroke="#cb8730" stroke-width="1.2"/><path d="M2065 507L2064.71 508.56L2063.86 510.06L2062.47 511.44L2060.61 512.66L2058.33 513.65L2055.74 514.39L2052.93 514.85L2050 515L2047.07 514.85L2044.26 514.39L2041.67 513.65L2039.39 512.66L2037.53 511.44L2036.14 510.06L2035.29 508.56L2035 507L2035.29 505.44L2036.14 503.94L2037.53 502.56L2039.39 501.34L2041.67 500.35L2044.26 499.61L2047.07 499.15L2050 499L2052.93 499.15L2055.74 499.61L2058.33 500.35L2060.61 501.34L2062.47 502.56L2063.86 503.94L2064.71 505.44Z" fill="#ffd083" stroke="#cb8730" stroke-width="1.2"/><path d="M2016 431L2044 447M2068 505L2092 485" fill="none" stroke="#c78030" stroke-width="3" marker-end="url(#a)"/><path d="M2099 472L2098.77 473.37L2098.09 474.68L2096.98 475.89L2095.49 476.95L2093.67 477.82L2091.59 478.47L2089.34 478.87L2087 479L2084.66 478.87L2082.41 478.47L2080.33 477.82L2078.51 476.95L2077.02 475.89L2075.91 474.68L2075.23 473.37L2075 472L2075.23 470.63L2075.91 469.32L2077.02 468.11L2078.51 467.05L2080.33 466.18L2082.41 465.53L2084.66 465.13L2087 465L2089.34 465.13L2091.59 465.53L2093.67 466.18L2095.49 467.05L2096.98 468.11L2098.09 469.32L2098.77 470.63Z" fill="#58a56a" stroke="#438454" stroke-width="1.2"/><path d="M2087 465V418" stroke="#438454" stroke-width="2"/><path d="M2087 418L2109 426L2087 434Z" fill="#58a56a"/><text x="2070" y="407" font-size="18">Goal</text><path d="M1942 501L1941.54 502.95L1940.17 504.83L1937.96 506.56L1934.97 508.07L1931.33 509.31L1927.18 510.24L1922.68 510.81L1918 511L1913.32 510.81L1908.82 510.24L1904.67 509.31L1901.03 508.07L1898.04 506.56L1895.83 504.83L1894.46 502.95L1894 501L1894.46 499.05L1895.83 497.17L1898.04 495.44L1901.03 493.93L1904.67 492.69L1908.82 491.76L1913.32 491.19L1918 491L1922.68 491.19L1927.18 491.76L1931.33 492.69L1934.97 493.93L1937.96 495.44L1940.17 497.17L1941.54 499.05Z" fill="#c3ced7" stroke="#c3ced7" stroke-width="1.2"/><path d="M1918 477V497" stroke="#8096a8" stroke-width="1.5" stroke-dasharray="4 4"/><path d="M1896 433L1940 455M1896 455L1940 433" stroke="#334155" stroke-width="5"/><path d="M1909 433L1908.75 433.98L1908.01 434.91L1906.81 435.78L1905.19 436.54L1903.22 437.16L1900.97 437.62L1898.54 437.9L1896 438L1893.46 437.9L1891.03 437.62L1888.78 437.16L1886.81 436.54L1885.19 435.78L1883.99 434.91L1883.25 433.98L1883 433L1883.25 432.02L1883.99 431.09L1885.19 430.22L1886.81 429.46L1888.78 428.84L1891.03 428.38L1893.46 428.1L1896 428L1898.54 428.1L1900.97 428.38L1903.22 428.84L1905.19 429.46L1906.81 430.22L1908.01 431.09L1908.75 432.02Z" fill="#b8d5ed" stroke="#52718d" stroke-width="1.2"/><path d="M1953 455L1952.75 455.98L1952.01 456.91L1950.81 457.78L1949.19 458.54L1947.22 459.16L1944.97 459.62L1942.54 459.9L1940 460L1937.46 459.9L1935.03 459.62L1932.78 459.16L1930.81 458.54L1929.19 457.78L1927.99 456.91L1927.25 455.98L1927 455L1927.25 454.02L1927.99 453.09L1929.19 452.22L1930.81 451.46L1932.78 450.84L1935.03 450.38L1937.46 450.1L1940 450L1942.54 450.1L1944.97 450.38L1947.22 450.84L1949.19 451.46L1950.81 452.22L1952.01 453.09L1952.75 454.02Z" fill="#b8d5ed" stroke="#52718d" stroke-width="1.2"/><path d="M1909 455L1908.75 455.98L1908.01 456.91L1906.81 457.78L1905.19 458.54L1903.22 459.16L1900.97 459.62L1898.54 459.9L1896 460L1893.46 459.9L1891.03 459.62L1888.78 459.16L1886.81 458.54L1885.19 457.78L1883.99 456.91L1883.25 455.98L1883 455L1883.25 454.02L1883.99 453.09L1885.19 452.22L1886.81 451.46L1888.78 450.84L1891.03 450.38L1893.46 450.1L1896 450L1898.54 450.1L1900.97 450.38L1903.22 450.84L1905.19 451.46L1906.81 452.22L1908.01 453.09L1908.75 454.02Z" fill="#b8d5ed" stroke="#52718d" stroke-width="1.2"/><path d="M1953 433L1952.75 433.98L1952.01 434.91L1950.81 435.78L1949.19 436.54L1947.22 437.16L1944.97 437.62L1942.54 437.9L1940 438L1937.46 437.9L1935.03 437.62L1932.78 437.16L1930.81 436.54L1929.19 435.78L1927.99 434.91L1927.25 433.98L1927 433L1927.25 432.02L1927.99 431.09L1929.19 430.22L1930.81 429.46L1932.78 428.84L1935.03 428.38L1937.46 428.1L1940 428L1942.54 428.1L1944.97 428.38L1947.22 428.84L1949.19 429.46L1950.81 430.22L1952.01 431.09L1952.75 432.02Z" fill="#b8d5ed" stroke="#52718d" stroke-width="1.2"/><path d="M1909 438L1927 438L1927 450L1909 450Z" fill="#548bc4" stroke="#718096" stroke-width="1.2"/><text x="1850" y="420" font-size="17">UAV</text>
+<text x="1985" y="654" font-size="20"  text-anchor="middle">Gray: static   Orange: moving</text>
+<text x="1985" y="690" font-size="20"  text-anchor="middle">Green: goal</text>
+<text x="1985" y="724" font-size="19"  text-anchor="middle">Illustrative 3D view</text>
+<path d="M321 300H390" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<path d="M321 630H390" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<path d="M740 300H765V440H790" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<path d="M740 630H765V550H790" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<path d="M995 490H1045" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<path d="M1425 300H1480" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<path d="M1605 410V510" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<text x="1620" y="466" font-size="18"  >Actor output</text>
+<path d="M1730 625H1765V300H1800" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<path d="M1985 760V815H185V760" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<text x="1120" y="803" font-size="21"  >Next observation</text>
+<rect x="160" y="875" width="1870" height="280" rx="18" fill="#f8fafc" stroke="#94a3b8" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="190" y="911" font-size="25" font-weight="bold" >Training only: experience replay and latent imagination</text>
+<rect x="205" y="950" width="325" height="155" rx="18" fill="#efe7f7" stroke="#8965b2" stroke-width="2" />
+<text x="367" y="985" font-size="24" font-weight="bold" text-anchor="middle">Replay Buffer</text>
+<text x="229" y="1030" font-size="19"  >Observations, actions, rewards</text>
+<text x="229" y="1063" font-size="19"  >and continuation indicators</text>
+<rect x="605" y="950" width="405" height="155" rx="18" fill="#e4effc" stroke="#5591c8" stroke-width="2" />
+<text x="807" y="985" font-size="24" font-weight="bold" text-anchor="middle">World-Model Learning</text>
+<text x="628" y="1024" font-size="19"  >Train encoders, RSSM and predictors</text>
+<text x="628" y="1057" font-size="19"  >Reconstruction, KL, reward</text>
+<text x="628" y="1085" font-size="19"  >and continuation losses</text>
+<rect x="1085" y="950" width="355" height="155" rx="18" fill="#e0f5f0" stroke="#32998a" stroke-width="2" />
+<text x="1262" y="985" font-size="24" font-weight="bold" text-anchor="middle">Latent Imagination</text>
+<text x="1110" y="1031" font-size="20"  >Roll out H-step trajectories</text>
+<text x="1110" y="1066" font-size="20"  >in learned latent space</text>
+<rect x="1515" y="950" width="470" height="155" rx="18" fill="#fff2df" stroke="#d79a43" stroke-width="2" />
+<text x="1750" y="985" font-size="24" font-weight="bold" text-anchor="middle">Actor–Critic Learning</text>
+<text x="1538" y="1031" font-size="20"  >Update actor from imagined returns</text>
+<text x="1538" y="1066" font-size="20"  >Fit critic to return targets</text>
+<path d="M530 1030H605" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<path d="M1010 1030H1085" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<path d="M1440 1030H1515" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<path d="M2140 760V1198H367V1105" fill="none" stroke="#3979a6" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#a)"/>
+<text x="1010" y="1230" font-size="20"  >Collected experience</text>
+<path d="M807 950V850H1235V740" fill="none" stroke="#3979a6" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#a)"/>
+<text x="850" y="840" font-size="18"  >Update world model (including encoders)</text>
+<path d="M1750 950V845H1778V160H1605V190" fill="none" stroke="#3979a6" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#a)"/>
+<text x="1810" y="840" font-size="18"  >Update actor and critic</text>
+</g></svg>

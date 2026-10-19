@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2200" height="1250" viewBox="0 0 2200 1250">
+<defs><marker id="a" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#334155"/></marker></defs>
+<rect width="2200" height="1250" fill="white"/><g font-family="Arial" fill="#172b46">
+<text x="1100" y="58" font-size="38" font-weight="bold" text-anchor="middle">DreamerV3-based UAV Navigation Architecture</text>
+<rect x="30" y="110" width="310" height="650" rx="18" fill="#f5f1fb" stroke="#8965b2" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="185" y="150" font-size="26" font-weight="bold" text-anchor="middle">Observations</text>
+<circle cx="185" cy="282" r="94" fill="none" stroke="#a78bca" stroke-dasharray="5 5"/>
+<g stroke="#a78bca" stroke-width="1.5">
+<path d="M185 188V376M91 282H279M119 216L251 348M119 348L251 216M149 195L221 369M98 246L272 318M98 318L272 246M149 369L221 195"/>
+</g>
+<g stroke="#334155" stroke-width="7"><path d="M158 255L212 309M158 309L212 255"/></g>
+<g fill="#d9e2eb" stroke="#334155" stroke-width="2"><circle cx="156" cy="253" r="15"/><circle cx="214" cy="253" r="15"/><circle cx="156" cy="311" r="15"/><circle cx="214" cy="311" r="15"/><rect x="173" y="263" width="24" height="38" rx="7"/></g>
+
+<text x="185" y="410" font-size="22"  text-anchor="middle">360° horizontal LiDAR</text>
+<text x="185" y="442" font-size="21"  text-anchor="middle">8 × 72 rays (576D)</text>
+<text x="185" y="474" font-size="20"  text-anchor="middle">Ray-hit fractions in [0, 1]</text>
+<rect x="49" y="530" width="272" height="200" rx="18" fill="#ffffff" stroke="#c7b7dd" stroke-width="2" />
+<text x="185" y="567" font-size="23" font-weight="bold" text-anchor="middle">State vector (9D)</text>
+<text x="185" y="610" font-size="20"  text-anchor="middle">Relative goal position (3D)</text>
+<text x="185" y="649" font-size="20"  text-anchor="middle">World-frame velocity (3D)</text>
+<text x="185" y="688" font-size="20"  text-anchor="middle">Roll, pitch, yaw (3D)</text>
+<rect x="390" y="190" width="350" height="220" rx="18" fill="#e4effc" stroke="#5591c8" stroke-width="2" />
+<text x="565" y="231" font-size="25" font-weight="bold" text-anchor="middle">LiDAR Encoder Branch</text>
+<text x="412" y="274" font-size="20"  >Center: L_t − 0.5</text>
+<text x="412" y="308" font-size="20"  >3 × azimuth CNN + circular padding</text>
+<text x="412" y="342" font-size="20"  >RMSNorm + SiLU</text>
+<text x="412" y="376" font-size="20" font-weight="bold" >LiDAR embedding: 512D</text>
+<rect x="390" y="520" width="350" height="220" rx="18" fill="#e4effc" stroke="#5591c8" stroke-width="2" />
+<text x="565" y="561" font-size="25" font-weight="bold" text-anchor="middle">State Encoder Branch</text>
+<text x="412" y="603" font-size="20"  >Preprocess: symlog(x)</text>
+<text x="412" y="637" font-size="20"  >2-layer MLP (128 units)</text>
+<text x="412" y="671" font-size="20"  >RMSNorm + SiLU</text>
+<text x="412" y="705" font-size="20" font-weight="bold" >State embedding: 128D</text>
+<rect x="790" y="385" width="205" height="220" rx="18" fill="#e0f5f0" stroke="#32998a" stroke-width="2" />
+<text x="892" y="425" font-size="25" font-weight="bold" text-anchor="middle">Concatenate</text>
+<text x="892" y="470" font-size="20"  text-anchor="middle">[e_state, e_lidar]</text>
+<text x="892" y="524" font-size="21"  text-anchor="middle">Observation</text>
+<text x="892" y="557" font-size="20" font-weight="bold" text-anchor="middle">embedding: 640D</text>
+<rect x="1045" y="190" width="380" height="550" rx="18" fill="#e0f5f0" stroke="#32998a" stroke-width="2" />
+<text x="1235" y="230" font-size="26" font-weight="bold" text-anchor="middle">World Model</text>
+<text x="1070" y="279" font-size="24" font-weight="bold" >RSSM</text>
+<text x="1070" y="317" font-size="20"  >History + observation embedding</text>
+<text x="1070" y="354" font-size="20"  >Deterministic recurrent state h_t</text>
+<text x="1070" y="391" font-size="20"  >Discrete stochastic state z_t</text>
+<text x="1070" y="478" font-size="24" font-weight="bold" >Decoders and predictors</text>
+<text x="1070" y="521" font-size="20"  >Reconstruct LiDAR and state</text>
+<text x="1070" y="558" font-size="20"  >Predict reward</text>
+<text x="1070" y="595" font-size="20"  >Predict continuation probability</text>
+<rect x="1480" y="190" width="250" height="220" rx="18" fill="#e4effc" stroke="#5591c8" stroke-width="2" />
+<text x="1605" y="232" font-size="26" font-weight="bold" text-anchor="middle">Actor–Critic</text>
+<text x="1503" y="277" font-size="20"  >Actor: policy network</text>
+<text x="1503" y="311" font-size="20"  >Critic: value network</text>
+<text x="1503" y="359" font-size="21"  >Input: (h_t, z_t)</text>
+<rect x="1480" y="510" width="250" height="230" rx="18" fill="#fff2df" stroke="#d79a43" stroke-width="2" />
+<text x="1605" y="552" font-size="26" font-weight="bold" text-anchor="middle">Action (4D)</text>
+<text x="1605" y="598" font-size="22"  text-anchor="middle">[d_x, d_y, d_z, s]</text>
+<text x="1605" y="650" font-size="22"  text-anchor="middle">Velocity direction</text>
+<text x="1605" y="685" font-size="22"  text-anchor="middle">+ speed scale</text>
+<rect x="1800" y="110" width="370" height="650" rx="18" fill="#f0f7fb" stroke="#4383a9" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="1985" y="151" font-size="25" font-weight="bold" text-anchor="middle">PyBullet Environment</text>
+<text x="1985" y="189" font-size="25" font-weight="bold" text-anchor="middle">and Controller</text>
+<text x="1985" y="237" font-size="21"  text-anchor="middle">PID closed-loop control</text>
+<text x="1985" y="270" font-size="21"  text-anchor="middle">Motor RPM → UAV dynamics</text>
+<path d="M 1820 335 H 2138 V 601 H 1820 Z" fill="#edf0f3" stroke="#cbd5e1"/>
+<g fill="#9ba8b4" stroke="#718096"><circle cx="1860" cy="376" r="23"/><circle cx="1940" cy="358" r="19"/><circle cx="2050" cy="370" r="27"/><circle cx="2100" cy="485" r="23"/><circle cx="1920" cy="555" r="26"/><circle cx="1837" cy="522" r="16"/></g>
+<g fill="#eda954" stroke="#c78030"><circle cx="1935" cy="455" r="18"/><circle cx="2030" cy="535" r="18"/></g>
+<g stroke="#c78030" stroke-width="3" marker-end="url(#a)"><path d="M 1956 455 H 2000"/><path d="M 2030 514 V 478"/></g>
+<circle cx="2107" cy="357" r="12" fill="#58a56a"/><text x="2079" y="319" font-size="18">Goal</text>
+<path d="M 1850 440 L 1882 472 M 1850 472 L 1882 440" stroke="#334155" stroke-width="6"/><circle cx="1866" cy="456" r="10" fill="#548bc4"/>
+
+<text x="1985" y="654" font-size="20"  text-anchor="middle">Gray: static   Orange: moving</text>
+<text x="1985" y="690" font-size="20"  text-anchor="middle">Green: goal</text>
+<text x="1985" y="724" font-size="19"  text-anchor="middle">Illustrative top view</text>
+<path d="M340 300H390" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<path d="M321 630H390" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<path d="M740 300H765V440H790" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<path d="M740 630H765V550H790" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<path d="M995 490H1045" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<path d="M1425 300H1480" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<path d="M1605 410V510" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<text x="1620" y="466" font-size="18"  >Actor output</text>
+<path d="M1730 625H1765V300H1800" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<path d="M1985 760V815H185V760" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<text x="1120" y="803" font-size="21"  >Next observation</text>
+<rect x="160" y="875" width="1870" height="280" rx="18" fill="#f8fafc" stroke="#94a3b8" stroke-width="2" stroke-dasharray="8 5"/>
+<text x="190" y="911" font-size="25" font-weight="bold" >Training only: experience replay and latent imagination</text>
+<rect x="205" y="950" width="325" height="155" rx="18" fill="#efe7f7" stroke="#8965b2" stroke-width="2" />
+<text x="367" y="985" font-size="24" font-weight="bold" text-anchor="middle">Replay Buffer</text>
+<text x="229" y="1030" font-size="19"  >Observations, actions, rewards</text>
+<text x="229" y="1063" font-size="19"  >and continuation indicators</text>
+<rect x="605" y="950" width="405" height="155" rx="18" fill="#e4effc" stroke="#5591c8" stroke-width="2" />
+<text x="807" y="985" font-size="24" font-weight="bold" text-anchor="middle">World-Model Learning</text>
+<text x="628" y="1024" font-size="19"  >Train encoders, RSSM and predictors</text>
+<text x="628" y="1057" font-size="19"  >Reconstruction, KL, reward</text>
+<text x="628" y="1085" font-size="19"  >and continuation losses</text>
+<rect x="1085" y="950" width="355" height="155" rx="18" fill="#e0f5f0" stroke="#32998a" stroke-width="2" />
+<text x="1262" y="985" font-size="24" font-weight="bold" text-anchor="middle">Latent Imagination</text>
+<text x="1110" y="1031" font-size="20"  >Roll out H-step trajectories</text>
+<text x="1110" y="1066" font-size="20"  >in learned latent space</text>
+<rect x="1515" y="950" width="470" height="155" rx="18" fill="#fff2df" stroke="#d79a43" stroke-width="2" />
+<text x="1750" y="985" font-size="24" font-weight="bold" text-anchor="middle">Actor–Critic Learning</text>
+<text x="1538" y="1031" font-size="20"  >Update actor from imagined returns</text>
+<text x="1538" y="1066" font-size="20"  >Fit critic to return targets</text>
+<path d="M530 1030H605" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<path d="M1010 1030H1085" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<path d="M1440 1030H1515" fill="none" stroke="#334155" stroke-width="2.5"  marker-end="url(#a)"/>
+<path d="M2140 760V1198H367V1105" fill="none" stroke="#3979a6" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#a)"/>
+<text x="1010" y="1230" font-size="20"  >Collected experience</text>
+<path d="M807 950V850H1235V740" fill="none" stroke="#3979a6" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#a)"/>
+<text x="850" y="840" font-size="18"  >Update world model (including encoders)</text>
+<path d="M1750 950V845H1778V160H1605V190" fill="none" stroke="#3979a6" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#a)"/>
+<text x="1810" y="840" font-size="18"  >Update actor and critic</text>
+</g></svg>
