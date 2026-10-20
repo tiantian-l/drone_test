@@ -85,3 +85,20 @@ PyBullet replay equivalence. Before production collection, run the same checkpoi
 and full map schedule with recording off and full, and compare per-map results.
 Also cross two training evaluation cycles and verify separate complete directories
 and reloadable snapshots. Recording adds CPU queries and filesystem overhead.
+
+## Slurm submission
+
+From the repository root on the cluster:
+
+```sh
+EVAL_DIAGNOSTICS=full sbatch cloud/eval_final_slurm.sh 20_dense /absolute/training/run /absolute/checkpoint
+```
+
+The optional fourth positional argument is a new output directory. Without it,
+results go to the existing project `final_eval/SCENARIO/job_JOBID` directory.
+`EVAL_DIAGNOSTICS` accepts off (default), summary, or full. The launcher defaults
+to `cloud/test_maps_diagnostics`, containing the same seeds and scenario definitions
+as `test_maps_v1`, with updated source fingerprints for the three diagnostic run
+settings only. Original manifests remain untouched. `TEST_SUITE_DIR` can override
+the directory, but source checks remain enforced. Sync the launcher, new manifests,
+recorder, and modified Dreamer submodule files to the cluster together.

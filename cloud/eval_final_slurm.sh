@@ -1,5 +1,5 @@
 #!/bin/bash
-# sbatch cloud/eval_final_slurm.sh SCENARIO RUN_DIR CHECKPOINT [OUTPUT_DIR]
+# EVAL_DIAGNOSTICS=full sbatch cloud/eval_final_slurm.sh SCENARIO RUN_DIR CHECKPOINT [OUTPUT_DIR]
 #SBATCH --job-name=final_eval
 #SBATCH --nodes=1
 #SBATCH --gpus=1
@@ -16,6 +16,11 @@ if [[ $# -lt 3 || $# -gt 4 ]]; then
 fi
 cd "${SLURM_SUBMIT_DIR:?Submit from the repository root}"
 scenario="$1"
+diagnostics="${EVAL_DIAGNOSTICS:-off}"
+case "$diagnostics" in
+  off|summary|full) ;;
+  *) echo "EVAL_DIAGNOSTICS must be off, summary, or full." >&2; exit 2 ;;
+esac
 case "$scenario" in
   10_sparse|10_dense|20_sparse|20_dense|20_sparse_dynamic) ;;
   *) echo "Unknown test scenario: $scenario" >&2; exit 2 ;;
@@ -33,13 +38,14 @@ output="${4:-/projects/EEHPC-DEV-2026D07-102/dreamer/logdir/final_eval/${scenari
 echo "Evaluation scenario: $scenario; source policy: $policy_label"
 echo "Checkpoint: $checkpoint"
 echo "Results: $output"
+echo "Diagnostics: $diagnostics"
 export CONDA_ROOT="${CONDA_ROOT:-/projects/EEHPC-DEV-2026D07-102/dreamer/dependency/miniconda3}"
 export ENV_NAME="${ENV_NAME:-drone}"
 export PYTHONNOUSERSITE=1
 export PYTHONPATH="$PWD:$PWD/third_party/dreamerv3:$PWD/third_party/gym-pybullet-drones:${PYTHONPATH:-}"
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 export TF_NUM_INTRAOP_THREADS=1 TF_NUM_INTEROP_THREADS=1
-manifest="${TEST_SUITE_DIR:-$PWD/cloud/test_maps_v1}/${scenario}.json"
+manifest="${TEST_SUITE_DIR:-$PWD/cloud/test_maps_diagnostics}/${scenario}.json"
 test -f "$run_dir/config.yaml"
 test -f "$manifest"
 test -e "$checkpoint"
@@ -47,4 +53,5 @@ nvidia-smi
 exec "${CONDA_ROOT}/envs/${ENV_NAME}/bin/python" cloud/eval_final.py \
   --config "$run_dir/config.yaml" --checkpoint "$checkpoint" \
   --policy-label "$policy_label" \
-  --manifest "$manifest" --output "$output" --dtype "${EVAL_DTYPE:-bfloat16}"
+  --manifest "$manifest" --output "$output" --dtype "${EVAL_DTYPE:-bfloat16}" \
+  --diagnostics "$diagnostics"
