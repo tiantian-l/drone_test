@@ -98,6 +98,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--maps-only', action='store_true', help='Generate actual map geometry without loading an agent')
     parser.add_argument('--dtype', choices=['bfloat16', 'float32'], default='bfloat16')
+    parser.add_argument('--diagnostics', choices=['off', 'summary', 'full'], default='off')
     args = parser.parse_args()
     if not args.maps_only and not args.checkpoint:
         parser.error('--checkpoint is required unless --maps-only is used')
@@ -165,7 +166,12 @@ def main():
     else:
         agent = make_agent(config)
         elements.checkpoint.load(str(checkpoint), {'agent': agent.load})
-        records, _ = evaluate(agent, factories, 16, parallel=True)
+        records, _ = evaluate(agent, factories, 16, parallel=True,
+            diagnostics=dict(mode=args.diagnostics, directory=str(artifact('diagnostics')),
+                metadata=dict(source='checkpoint_test', split='test',
+                    policy_label=policy_label, scenario=manifest['scenario'],
+                    checkpoint=str(checkpoint), checkpoint_sha256=checkpoint_hash,
+                    source_config=str(Path(args.config).resolve()))))
         (artifact('episodes.jsonl')).write_text(''.join(json.dumps(r) + '\n' for r in records))
         validate_coverage(records, manifest)
     maps = [json.loads((map_dir / f'{seed}.json').read_text()) for seed in manifest['map_seeds']]

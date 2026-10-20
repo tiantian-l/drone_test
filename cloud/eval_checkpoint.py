@@ -19,6 +19,7 @@ def main():
     parser.add_argument('--dtype', choices=['bfloat16', 'float32'], default='bfloat16')
     parser.add_argument('--eval-maps', type=int, default=None,
                         help='Override saved evaluation size; otherwise preserve it')
+    parser.add_argument('--diagnostics', choices=['off', 'summary', 'full'], default='off')
     args = parser.parse_args()
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=False)
@@ -39,7 +40,11 @@ def main():
     elements.checkpoint.load(args.checkpoint, {'agent': agent.load})
     records, summary = evaluate(agent,
         [partial(make_env, config, i, eval_mode=True) for i in range(workers)],
-        quota, parallel=True)
+        quota, parallel=True, diagnostics=dict(mode=args.diagnostics,
+            directory=str(output / 'diagnostics'), metadata=dict(
+                source='checkpoint_validation', split='validation',
+                checkpoint=str(Path(args.checkpoint).resolve()),
+                source_config=str(Path(args.config).resolve()))))
     (output / 'episodes.jsonl').write_text(
         ''.join(json.dumps(r) + '\n' for r in records))
     if len(records) != workers * quota:
