@@ -102,3 +102,44 @@ as `test_maps_v1`, with updated source fingerprints for the three diagnostic run
 settings only. Original manifests remain untouched. `TEST_SUITE_DIR` can override
 the directory, but source checks remain enforced. Sync the launcher, new manifests,
 recorder, and modified Dreamer submodule files to the cluster together.
+
+## Offline analysis and plots
+
+No GPU, checkpoint loading, or simulator is needed. The analysis script uses only
+Python's standard library. Plotting requires NumPy and Matplotlib. Run from the
+repository root with the cluster's existing Python environment:
+
+```sh
+RESULT=/projects/EEHPC-DEV-2026D07-102/dreamer/logdir/final_eval/10_dense/job_2096113
+python cloud/analyze_diagnostics.py "$RESULT"
+head -n 6 "$RESULT/analysis/failures.csv"
+python cloud/plot_diagnostic_episode.py "$RESULT" --seed 1010000
+```
+
+Replace the example seed with one listed in failures.csv. Plotting accepts any
+recorded seed, including successes. The default image path is
+`RESULT/plots/seed_SEED.png`. Use `--output /path/to/new.png` for another location.
+The analyzer also accepts `--output /path/to/new_analysis_directory`. Existing
+outputs are rejected to protect review work. Input can instead be the specific
+`*__diagnostics` directory, especially when a parent contains multiple captures.
+
+Analysis requires status=complete and mode=full. It validates file counts, worker
+quotas, unique seeds, geometry fingerprints, trajectory boundaries, step/time
+alignment, terminal state and path length. If available, it checks the matching
+original summary and per-map episode outcomes. Missing reference summaries are
+explicitly reported rather than represented as a successful comparison.
+
+Outputs: episodes.csv (all maps), failures.csv (success=0), summary.json (counts,
+rates, provenance and validation status). Terminal event flags can overlap;
+behavior_label starts as unreviewed. Collision IDs use the recorded safety-distance
+threshold; negative-clearance IDs indicate overlap, not measured contact force.
+Mean speed is over post-action samples. Minimum measured clearance is blank when
+nothing enters the finite query radius, and must not be compared as if every
+trajectory had fully observed clearances.
+
+The six-panel image shows top-view obstacle footprints and flight path, altitude,
+speed, velocity components, finite-radius clearance, and roll/pitch. Moving
+obstacle paths and initial outlines are shown when present; this is not an
+instantaneous collision visualization. Command at row t applies over (t-1,t].
+Unknown clearance is marked at the query radius as a lower bound, with gaps in
+the measured line. No causal failure labels are inferred automatically.
