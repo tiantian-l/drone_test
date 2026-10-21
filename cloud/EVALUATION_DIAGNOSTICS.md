@@ -205,3 +205,31 @@ never automatically deleted. Use a fresh `--output` directory to regenerate with
 new camera/render settings; skips do not compare those settings. Optional video
 settings: `--fps 20 --speed 0.5 --width 1280`. No GPU is required; run long CPU
 rendering batches on a compute allocation according to cluster policy.
+
+### Multi-view trial version
+
+Replay now defaults to `--layout multi`: fixed-camera 3D on the left,
+synchronized top view at upper right, and a fixed local vertical projection at
+lower right. Static and moving obstacles share a height color scale. Obstacles
+whose recorded terminal clearance crosses the collision threshold are red
+throughout the retrospective replay. This highlight is hindsight, not detection.
+The local projection follows the terminal drone-to-obstacle horizontal bearing;
+other obstacles are omitted when a terminal obstacle is identified. Overlap in
+this projection alone is not contact. No nearest-surface contact coordinates are
+inferred. Terminal X marks drone position. For boundary failures without a
+terminal obstacle the side view defaults to the x-z plane; top view retains the
+full trajectory extent, including boundary exits.
+
+Failure episodes play the last two seconds at half speed by default. Configure
+`--slow-last 2 --slow-factor 0.5`; use `--slow-last 0` to disable. Use `--hold 3`
+for a longer terminal pause, and `--layout single` for the original layout.
+Example (new filename avoids overwriting earlier videos):
+
+```sh
+python cloud/replay_diagnostic_episode.py "$RESULT" --seed 1010049 --layout multi --hold 3 --output "$RESULT/videos/seed_1010049_multi.mp4"
+```
+
+Sync both replay_diagnostic_episode.py and replay_views.py. Batch rendering uses
+the new default layout, but existing videos are skipped: choose a new batch output
+directory to regenerate. This trial still uses projected polygon rendering;
+it does not yet replace the renderer with a depth-buffered simulator engine.
