@@ -188,3 +188,20 @@ that endpoint as a failure. Clearance outside query radius is a lower bound.
 
 Run tests: `python -m unittest discover -s cloud -p 'test_diagnostic_replay.py'`.
 Synthetic geometry/MP4 checks do not replace reviewing real recorded episodes.
+
+## Batch all failure plots and videos
+
+```sh
+python cloud/render_failed_episodes.py "$RESULT"
+```
+
+Reads unsuccessful episode records directly (no failures.csv required), sorts seeds,
+and sequentially invokes the existing plot and 3D replay scripts using the current
+Python interpreter. Default outputs: `RESULT/failure_media/plots`, `videos`, and
+`batch.jsonl`. Each operation has a `.log` file. Successful existing artifacts are
+skipped (MP4 also requires its camera metadata). Individual errors do not stop later
+cases; the final process exits nonzero if any operation failed. Partial files are
+never automatically deleted. Use a fresh `--output` directory to regenerate with
+new camera/render settings; skips do not compare those settings. Optional video
+settings: `--fps 20 --speed 0.5 --width 1280`. No GPU is required; run long CPU
+rendering batches on a compute allocation according to cluster policy.
