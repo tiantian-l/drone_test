@@ -129,7 +129,7 @@ def render(directory, seed, output, fps=20, speed=1., start=0., end=None,
     fig=plt.figure(figsize=(width/100,height/100),dpi=100)
     if layout=='multi':
         ax=fig.add_axes([.01,.1,.59,.79])
-        top=fig.add_axes([.67,.57,.30,.34]);side=fig.add_axes([.67,.13,.30,.30])
+        top=fig.add_axes([.67,.57,.30,.34]);side=fig.add_axes([.64,.11,.35,.34],projection='3d')
     else:
         ax=fig.add_axes([0,.07,1,.82])
     bar=fig.add_axes([.12,.095,.35,.015])

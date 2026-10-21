@@ -233,3 +233,18 @@ Sync both replay_diagnostic_episode.py and replay_views.py. Batch rendering uses
 the new default layout, but existing videos are skipped: choose a new batch output
 directory to regenerate. This trial still uses projected polygon rendering;
 it does not yet replace the renderer with a depth-buffered simulator engine.
+
+### Terminal-region close-up update
+
+The lower-right panel is now a true 3D orthographic close-up, replacing the side
+projection. It uses a fixed 4 m x 4 m x 3 m window around the terminal drone
+position, at 28 degrees elevation and a side-oblique bearing relative to the
+terminal obstacle. It activates during the final two recorded seconds. The first
+two panels remain unchanged. Target obstacles are red with their full height
+labels; other nearby obstacles are faint. Objects may be cropped by the local
+window, so displayed cut faces are not physical obstacle tops. The blue marker
+and trail are recorded drone-center positions; the terminal cross is not a contact
+point. Relevant obstacle clearance is taken directly from the recorded query, or
+marked not measured. For boundary failures, red dashed lines indicate horizontal
+flight boundaries at current drone altitude. Use a fresh output filename to test
+this update, and sync both replay_diagnostic_episode.py and replay_views.py.
