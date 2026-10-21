@@ -20,6 +20,20 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(meta['elevation_deg'],52)
         self.assertEqual(len(cylinder_faces([0,0,1,2])),17)
 
+    def test_camera_on_start_edge_midpoint_normal(self):
+        for start, axis, direction in [([-5,2,1],0,-1),([5,-2,1],0,1),
+                                       ([2,-4,1],1,-1),([-2,4,1],1,1)]:
+            geometry=dict(bounds=[[-6,6],[-5,5],[0,4.5]],start=start,
+                          goal=[3,2,1],static_boxes=[])
+            # An out-of-bounds trajectory must not shift the camera sideways.
+            rows=[dict(state=[8,7,1],dynamic_cylinders=[])]
+            _,_,meta=camera(geometry,rows)
+            eye=np.array(meta['position']); target=np.array(meta['target'])
+            self.assertAlmostEqual(eye[1-axis],0)
+            self.assertAlmostEqual(target[0],0); self.assertAlmostEqual(target[1],0)
+            boundary=geometry['bounds'][axis][int(direction>0)]
+            self.assertGreater(direction*(eye[axis]-boundary),0)
+
     def test_terminal_included_and_slowdown(self):
         times=np.arange(31)/30
         normal=frame_indices(times,20,1,0,1,0)

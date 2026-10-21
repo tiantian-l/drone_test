@@ -36,13 +36,24 @@ def camera(geometry, rows, elevation=52, height_ratio=.8, azimuth=None):
             points.extend([[x-r,y-r,0],[x+r,y+r,h]])
     low = np.minimum(low,np.min(points,axis=0)); high=np.maximum(high,np.max(points,axis=0))
     length = float(max(high[:2]-low[:2]))
-    target = np.array([*(.5*(low[:2]+high[:2])), float(np.mean(bounds[2]))])
+    target = np.mean(bounds, axis=1)
+    start_edge = None
     if azimuth is None:
-        approach = np.asarray(geometry['start'])[:2]-np.asarray(geometry['goal'])[:2]
-        azimuth = math.degrees(math.atan2(approach[1],approach[0]))+30
+        # Use the nearest flight-region edge, not the randomized start-to-goal
+        # direction. Keep the camera on that edge midpoint's outward normal.
+        start = np.asarray(geometry['start'])
+        distances = [abs(start[0]-bounds[0,0]), abs(start[0]-bounds[0,1]),
+                     abs(start[1]-bounds[1,0]), abs(start[1]-bounds[1,1])]
+        edge = int(np.argmin(distances))
+        start_edge = ['x_min', 'x_max', 'y_min', 'y_max'][edge]
+        azimuth = [180., 0., -90., 90.][edge]
     az=math.radians(azimuth); el=math.radians(elevation)
     camera_z=max(height_ratio*length,target[2]+.1*length)
     distance=(camera_z-target[2])/math.tan(el)
+    if start_edge is not None:
+        axis = 0 if start_edge.startswith('x') else 1
+        distance = max(distance, (bounds[axis,1]-bounds[axis,0])/2 + .3*length)
+        camera_z = target[2] + distance*math.tan(el)
     offset=np.array([distance*math.cos(az),distance*math.sin(az),camera_z-target[2]])
     eye=target+offset
     forward=(target-eye)/np.linalg.norm(target-eye)
@@ -66,7 +77,7 @@ def camera(geometry, rows, elevation=52, height_ratio=.8, azimuth=None):
             break
         eye -= forward * (.1*length)
     meta=dict(position=eye.tolist(),target=target.tolist(),elevation_deg=elevation,
-        azimuth_deg=azimuth,scene_length=length,height_ratio_requested=height_ratio,
+        azimuth_deg=azimuth,start_edge=start_edge,scene_length=length,height_ratio_requested=height_ratio,
         vertical_fov_deg=math.degrees(2*math.atan(extent)))
     return project, extent, meta
 

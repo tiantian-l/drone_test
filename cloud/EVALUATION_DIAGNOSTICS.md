@@ -167,8 +167,11 @@ files are never overwritten. Supported options: `--fps 20`, `--speed 1`,
 Camera height initially uses 0.8 times the full horizontal scene extent, including
 bounds, start/goal, obstacles and the recorded path. Target height is the midpoint
 of permitted flight heights. Horizontal distance follows from that height
- difference and the selected depression angle. Default azimuth looks from the
-start side at a 30-degree diagonal. Camera and FOV stay fixed throughout the clip;
+ difference and the selected depression angle. Default azimuth is perpendicular to the flight-region edge nearest the start.
+The camera sits behind that edge midpoint, looking toward the flight-region
+center, independent of randomized start/goal offsets. It stays at least 0.3 scene
+lengths beyond the edge; height is increased if needed to preserve the requested
+elevation. Explicit --azimuth overrides this automatic edge selection. Camera and FOV stay fixed throughout the clip;
 if geometry extends behind the initial camera, it retreats along its view ray.
 FOV is fitted to the full scene with margin; actual camera values are recorded.
 
