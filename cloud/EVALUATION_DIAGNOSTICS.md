@@ -143,3 +143,45 @@ obstacle paths and initial outlines are shown when present; this is not an
 instantaneous collision visualization. Command at row t applies over (t-1,t].
 Unknown clearance is marked at the query radius as a lower bound, with gaps in
 the measured line. No causal failure labels are inferred automatically.
+
+## Recorded 3D video replay
+
+MP4 playback uses existing full diagnostic map/trajectory files, not a new policy
+rollout. CPU only; requires NumPy, Matplotlib and the FFmpeg executable with libx264
+(e.g. `conda install numpy matplotlib ffmpeg` in the analysis environment).
+The CSV/summary exports alone are insufficient: retain the original diagnostics.
+
+```sh
+RESULT=/projects/EEHPC-DEV-2026D07-102/dreamer/logdir/final_eval/10_dense/job_2096113
+python cloud/replay_diagnostic_episode.py "$RESULT" --seed 1010145
+# A slower selected interval, saved separately:
+python cloud/replay_diagnostic_episode.py "$RESULT" --seed 1010145 --start 4 --speed 0.5 --output "$RESULT/videos/seed_1010145_slow.mp4"
+```
+
+Default output: `RESULT/videos/seed_SEED.mp4` plus `.camera.json` containing actual
+camera position, target, FOV, playback settings and source identity. Existing
+files are never overwritten. Supported options: `--fps 20`, `--speed 1`,
+`--start 0`, `--end SECONDS`, `--tail 1`, `--hold 1`, `--width 1280`,
+`--elevation 52`, `--height-ratio 0.8`, `--azimuth DEGREES`.
+
+Camera height initially uses 0.8 times the full horizontal scene extent, including
+bounds, start/goal, obstacles and the recorded path. Target height is the midpoint
+of permitted flight heights. Horizontal distance follows from that height
+ difference and the selected depression angle. Default azimuth looks from the
+start side at a 30-degree diagonal. Camera and FOV stay fixed throughout the clip;
+if geometry extends behind the initial camera, it retreats along its view ray.
+FOV is fitted to the full scene with margin; actual camera values are recorded.
+
+Gray boxes are static; orange cylinders move using each recorded step. A schematic
+enlarged drone cross follows recorded roll/pitch/yaw. Obstacles are translucent,
+and the drone/trail are deliberate x-ray overlays to aid diagnosis: this is not a
+photorealistic simulator render or a sensor-visibility reconstruction. Green circle
+and star mark start and goal. The HUD shows time, altitude, speed, clearance, and
+terminal flags at the recorded terminal state. Full captures include both static
+and dynamic cases. Playback holds the preceding recorded state at each output
+frame (no invented interpolation), always includes the selected end state, and
+holds it for the requested duration. Arbitrary clips ending early do not label
+that endpoint as a failure. Clearance outside query radius is a lower bound.
+
+Run tests: `python -m unittest discover -s cloud -p 'test_diagnostic_replay.py'`.
+Synthetic geometry/MP4 checks do not replace reviewing real recorded episodes.
