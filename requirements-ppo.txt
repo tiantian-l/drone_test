@@ -1,0 +1,14 @@
+# Install in a separate environment; no JAX/TensorFlow needed.
+stable-baselines3==2.8.0
+gymnasium==1.2.0
+torch>=2.3,<3
+numpy>=1.26,<3
+scipy>=1.12,<2
+pybullet==3.2.7
+transforms3d==0.4.2
+matplotlib>=3.8,<4
+control==0.10.2
+PyYAML>=6,<7
+tensorboard>=2.16,<3
+Pillow>=10
+setuptools<81

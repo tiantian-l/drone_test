@@ -1,0 +1,23 @@
+# Initial candidate, not a tuned result. Environment/reward come from Dreamer presets.
+scenario: 10_sparse
+seed: 0
+total_timesteps: 500000
+n_envs: 8
+device: auto
+torch_threads: 1
+eval_every: 50000
+validation_workers: 16
+validation_quota: 8
+validation_stride: 16
+ppo:
+  learning_rate: 0.0003
+  n_steps: 512
+  batch_size: 256
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.0
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  target_kl: 0.03
