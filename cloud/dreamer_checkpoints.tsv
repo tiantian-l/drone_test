@@ -1,0 +1,8 @@
+# Selected DreamerV3 checkpoints used in the thesis (validation-selected; do not re-select).
+# label	train_scenario	run_dir	checkpoint_name	thesis_val_success
+pi1	10_sparse	/projects/EEHPC-DEV-2026D07-102/dreamer/logdir/drone_static_factorial_a100_bs32/job_1941496/10_sparse/seed_0	step_0002300000_success_0.9766.ckpt	97.66
+pi2	10_dense	/projects/EEHPC-DEV-2026D07-102/dreamer/logdir/bs32/job_1983614/10_dense/seed_0	step_0001700000_success_0.9375.ckpt	93.75
+pi3	20_sparse	/projects/EEHPC-DEV-2026D07-102/dreamer/logdir/4090/20_sparse/seed_0	step_0002200000_success_0.9531.ckpt	95.31
+pi4	20_dense	/projects/EEHPC-DEV-2026D07-102/dreamer/logdir/4090/20_dense/seed_0	step_0004800000_success_0.9297.ckpt	92.97
+pi_dyn	20_sparse_dynamic	/projects/EEHPC-DEV-2026D07-102/dreamer/logdir/drone_nav/20260921T143217	step_0002900000_success_0.8984.ckpt	-
+pi_scratch	20_sparse_dynamic	/projects/EEHPC-DEV-2026D07-102/dreamer/logdir/drone_nav/20261008T204751	step_0005200000_success_0.9297.ckpt	-

@@ -703,6 +703,10 @@ class NavigationAviary(BaseRLAviary):
             # reseed twice, making the first two training episodes identical.
             Env.reset(self, seed=seed)
         self._resample_task()
+        # BaseAviary resets physics but retains the velocity PID objects.
+        # Clear integrators/attitude history to isolate episodes for all policies.
+        for controller in self.ctrl:
+            controller.reset()
         obs, info = super().reset(seed=None, options=options)
         state = self._getDroneStateVector(0)
         d0 = float(np.linalg.norm(self.TARGET_POS - state[0:3]))
