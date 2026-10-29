@@ -1,6 +1,6 @@
 #!/bin/bash
 # Frozen-test evaluation of the tuned Map-A* baseline (256 maps per scenario),
-# using the same PID-reset manifests as the APF test run.
+# on the same test suite and environment version as the thesis DreamerV3 results.
 #   sbatch --array=0-4 cloud/eval_astar_test_slurm.sh [TUNING_ROOT] [OUTPUT_ROOT]
 #   TASK_INFO=none sbatch --array=0-4 cloud/eval_astar_test_slurm.sh   # no-region variant
 # Reads TUNING_ROOT/<scenario>/<scenario>_frozen_params.json. Run only after
@@ -24,7 +24,9 @@ suffix=""; [[ "$task_info" == none ]] && suffix="_noregion"
 tuning_root="${1:-/projects/EEHPC-DEV-2026D07-102/dreamer/logdir/baseline_tuning/astar${suffix}}"
 out_root="${2:-/projects/EEHPC-DEV-2026D07-102/dreamer/logdir/baseline_test/astar${suffix}}"
 params="$tuning_root/$scenario/${scenario}_frozen_params.json"
-manifest="$PWD/cloud/test_maps_pidreset_v2/${scenario}.json"
+# Default: the suite of the thesis DreamerV3 test results (training-time
+# environment, no per-episode PID reset). Override with TEST_SUITE_DIR.
+manifest="${TEST_SUITE_DIR:-$PWD/cloud/test_maps_diagnostics}/${scenario}.json"
 test -f "$params" && test -f "$manifest"
 export CONDA_ROOT="${CONDA_ROOT:-/projects/EEHPC-DEV-2026D07-102/dreamer/dependency/miniconda3}"
 export ENV_NAME="${ENV_NAME:-drone}"

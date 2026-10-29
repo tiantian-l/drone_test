@@ -33,11 +33,17 @@ of the same cost.
 
 ## Environment version
 
-`drone_nav/envs/nav_aviary.py` on this branch is byte-identical to
-`feature/apf` (includes the per-episode PID reset). The test manifests in
-`cloud/test_maps_pidreset_v2/` are the ones used for the APF test run and
-validate against these sources, so APF and Map-A* are tested on the same maps
-and environment version.
+All final results use the environment version of the thesis DreamerV3 results:
+`drone_nav/envs/nav_aviary.py` **without** the per-episode PID reset (the fix
+was evaluated and reverted, see project note `dreamer_reeval_pidreset_20261029`).
+The frozen test uses `cloud/test_maps_diagnostics/`, the suite used for the
+DreamerV3 test tables, so Map-A* and DreamerV3 share maps, environment and test
+protocol (16 workers x 16 maps in fixed order).
+
+Tuning (`tune_astar.py`) resets the PID controllers at the start of each
+validation episode, so tuning is deterministic and independent of episode
+order; with this, tuning results are identical whether or not the environment
+contains the fix (checked on 10_dense).
 
 ## Setup (once)
 
@@ -74,9 +80,7 @@ sbatch --array=0-4 cloud/eval_astar_test_slurm.sh
 TASK_INFO=none sbatch --array=0-4 cloud/eval_astar_test_slurm.sh
 ```
 
-Do not change parameters after looking at test results. Run the DreamerV3
-re-evaluation on the same cluster so that all methods share machine and
-environment version.
+Do not change parameters after looking at test results.
 
 ## Development note
 

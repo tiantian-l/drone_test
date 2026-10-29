@@ -104,6 +104,11 @@ def run_episode(task):
     env._eval_episode_counter = 0
     start = time.monotonic()
     obs, _ = env.reset()
+    # Tuning protocol: start every validation episode from a cleared PID state,
+    # so an episode depends only on (parameters, map seed) regardless of which
+    # episode the worker ran before. No-op if the environment already does it.
+    for controller in env.ctrl:
+        controller.reset()
     policy.reset()
     policy.set_task(env.TARGET_POS)  # declared task information (ignored with task_info='none')
     assert int(env.CURRENT_EVAL_SEED) == int(seed)
