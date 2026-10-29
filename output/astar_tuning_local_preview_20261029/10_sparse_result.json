@@ -1,0 +1,861 @@
+{
+  "scenario": "10_sparse",
+  "seeds": [
+    170000,
+    170127
+  ],
+  "selected": "c29",
+  "selected_params": {
+    "cruise_speed": 1.9795,
+    "inflation": 0.4606,
+    "hard_radius": 0.3,
+    "clearance_weight": 7.5066,
+    "clearance_scale": 0.5,
+    "lookahead": 1.5956,
+    "replan_period": 0.2,
+    "resolution": 0.1,
+    "boundary_margin": 0.3,
+    "slow_clearance": 0.4774,
+    "min_speed_fraction": 0.3,
+    "vertical_gain": 1.0,
+    "max_vertical_speed": 0.8,
+    "max_acceleration": 3.0,
+    "ground_filter": 0.15,
+    "safety_radius": 0.5804,
+    "stop_radius": 0.3,
+    "safety_push": 0.3,
+    "safety_band": 0.4,
+    "hit_logodds": 0.85,
+    "miss_logodds": 0.4,
+    "occupied_threshold": 0.5,
+    "logodds_clamp": 3.5
+  },
+  "selected_summary": {
+    "episodes": 128,
+    "success_rate": 1.0,
+    "collision_rate": 0.0,
+    "crash_rate": 0.0,
+    "timeout_rate": 0.0,
+    "static_collision_rate": 0.0,
+    "dynamic_collision_rate": 0.0,
+    "success_count": 128,
+    "success_ci95": [
+      0.9708630437264916,
+      1.0
+    ],
+    "success_time_mean": 8.552604166666667,
+    "success_path_mean": 15.484189000560056,
+    "spl": 0.800262942652412
+  },
+  "incumbent_summary": {
+    "episodes": 128,
+    "success_rate": 0.984375,
+    "collision_rate": 0.0,
+    "crash_rate": 0.0,
+    "timeout_rate": 0.015625,
+    "static_collision_rate": 0.0,
+    "dynamic_collision_rate": 0.0,
+    "success_count": 126,
+    "success_ci95": [
+      0.9448190233201829,
+      0.9957045502898559
+    ],
+    "success_time_mean": 12.412962962962963,
+    "success_path_mean": 14.121844723439514,
+    "spl": 0.8490765780462135
+  },
+  "rungs": [
+    {
+      "rung": 0,
+      "maps": 32,
+      "ranking": [
+        {
+          "id": "c29",
+          "episodes": 32,
+          "success_rate": 1.0,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.0,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 32,
+          "success_ci95": [
+            0.8928208017449293,
+            1.0
+          ],
+          "success_time_mean": 8.722916666666666,
+          "success_path_mean": 15.830593560898865,
+          "spl": 0.7847143588058028
+        },
+        {
+          "id": "c24",
+          "episodes": 32,
+          "success_rate": 1.0,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.0,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 32,
+          "success_ci95": [
+            0.8928208017449293,
+            1.0
+          ],
+          "success_time_mean": 9.301041666666666,
+          "success_path_mean": 14.430454252564811,
+          "spl": 0.8516011178022145
+        },
+        {
+          "id": "c27",
+          "episodes": 32,
+          "success_rate": 1.0,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.0,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 32,
+          "success_ci95": [
+            0.8928208017449293,
+            1.0
+          ],
+          "success_time_mean": 9.4125,
+          "success_path_mean": 14.328512380353327,
+          "spl": 0.8715442509353157
+        },
+        {
+          "id": "c16",
+          "episodes": 32,
+          "success_rate": 1.0,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.0,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 32,
+          "success_ci95": [
+            0.8928208017449293,
+            1.0
+          ],
+          "success_time_mean": 10.103125,
+          "success_path_mean": 13.383403492232205,
+          "spl": 0.9137974842522381
+        },
+        {
+          "id": "c15",
+          "episodes": 32,
+          "success_rate": 1.0,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.0,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 32,
+          "success_ci95": [
+            0.8928208017449293,
+            1.0
+          ],
+          "success_time_mean": 10.358333333333333,
+          "success_path_mean": 17.40439766267137,
+          "spl": 0.7142415168892349
+        },
+        {
+          "id": "c06",
+          "episodes": 32,
+          "success_rate": 1.0,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.0,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 32,
+          "success_ci95": [
+            0.8928208017449293,
+            1.0
+          ],
+          "success_time_mean": 12.354166666666666,
+          "success_path_mean": 18.105938566932664,
+          "spl": 0.6945241963131535
+        },
+        {
+          "id": "c08",
+          "episodes": 32,
+          "success_rate": 0.96875,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.03125,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 31,
+          "success_ci95": [
+            0.8425573617998744,
+            0.9944621398359969
+          ],
+          "success_time_mean": 10.475268817204302,
+          "success_path_mean": 12.942374568618376,
+          "spl": 0.9141024553168823
+        },
+        {
+          "id": "c22",
+          "episodes": 32,
+          "success_rate": 0.96875,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.03125,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 31,
+          "success_ci95": [
+            0.8425573617998744,
+            0.9944621398359969
+          ],
+          "success_time_mean": 11.216129032258063,
+          "success_path_mean": 16.686910712266425,
+          "spl": 0.7257233389848009
+        },
+        {
+          "id": "c00_incumbent",
+          "episodes": 32,
+          "success_rate": 0.96875,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.03125,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 31,
+          "success_ci95": [
+            0.8425573617998744,
+            0.9944621398359969
+          ],
+          "success_time_mean": 12.649462365591397,
+          "success_path_mean": 14.473369277662277,
+          "spl": 0.8254196351971533
+        },
+        {
+          "id": "c10",
+          "episodes": 32,
+          "success_rate": 0.96875,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.03125,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 31,
+          "success_ci95": [
+            0.8425573617998744,
+            0.9944621398359969
+          ],
+          "success_time_mean": 12.944086021505376,
+          "success_path_mean": 13.434098877045916,
+          "spl": 0.884720009278397
+        },
+        {
+          "id": "c03",
+          "episodes": 32,
+          "success_rate": 0.96875,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.03125,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 31,
+          "success_ci95": [
+            0.8425573617998744,
+            0.9944621398359969
+          ],
+          "success_time_mean": 13.059139784946236,
+          "success_path_mean": 15.704029213680645,
+          "spl": 0.7624969287139782
+        },
+        {
+          "id": "c02",
+          "episodes": 32,
+          "success_rate": 0.96875,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.03125,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 31,
+          "success_ci95": [
+            0.8425573617998744,
+            0.9944621398359969
+          ],
+          "success_time_mean": 13.32258064516129,
+          "success_path_mean": 15.709838759308107,
+          "spl": 0.7592034131262623
+        },
+        {
+          "id": "c26",
+          "episodes": 32,
+          "success_rate": 0.96875,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.03125,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 31,
+          "success_ci95": [
+            0.8425573617998744,
+            0.9944621398359969
+          ],
+          "success_time_mean": 13.695698924731182,
+          "success_path_mean": 15.217813984373871,
+          "spl": 0.7840118272632539
+        },
+        {
+          "id": "c07",
+          "episodes": 32,
+          "success_rate": 0.96875,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.03125,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 31,
+          "success_ci95": [
+            0.8425573617998744,
+            0.9944621398359969
+          ],
+          "success_time_mean": 13.788172043010753,
+          "success_path_mean": 17.626489681849904,
+          "spl": 0.6914260702706007
+        },
+        {
+          "id": "c31",
+          "episodes": 32,
+          "success_rate": 0.9375,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.0625,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 30,
+          "success_ci95": [
+            0.7985287685584542,
+            0.982689432968359
+          ],
+          "success_time_mean": 9.02111111111111,
+          "success_path_mean": 13.457005326207804,
+          "spl": 0.8550586291465533
+        },
+        {
+          "id": "c01",
+          "episodes": 32,
+          "success_rate": 0.9375,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.0625,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 30,
+          "success_ci95": [
+            0.7985287685584542,
+            0.982689432968359
+          ],
+          "success_time_mean": 9.59,
+          "success_path_mean": 14.384497550982388,
+          "spl": 0.804193888189284
+        },
+        {
+          "id": "c18",
+          "episodes": 32,
+          "success_rate": 0.9375,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.0625,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 30,
+          "success_ci95": [
+            0.7985287685584542,
+            0.982689432968359
+          ],
+          "success_time_mean": 12.665555555555555,
+          "success_path_mean": 15.18766182889827,
+          "spl": 0.7629081537647726
+        },
+        {
+          "id": "c12",
+          "episodes": 32,
+          "success_rate": 0.9375,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.0625,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 30,
+          "success_ci95": [
+            0.7985287685584542,
+            0.982689432968359
+          ],
+          "success_time_mean": 13.158888888888889,
+          "success_path_mean": 13.830535889615058,
+          "spl": 0.8332803997429598
+        },
+        {
+          "id": "c23",
+          "episodes": 32,
+          "success_rate": 0.9375,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.0625,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 30,
+          "success_ci95": [
+            0.7985287685584542,
+            0.982689432968359
+          ],
+          "success_time_mean": 14.483333333333333,
+          "success_path_mean": 13.860327150274895,
+          "spl": 0.8303821218321117
+        },
+        {
+          "id": "c11",
+          "episodes": 32,
+          "success_rate": 0.90625,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.09375,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 29,
+          "success_ci95": [
+            0.7578184527161212,
+            0.9675984487016337
+          ],
+          "success_time_mean": 9.002298850574713,
+          "success_path_mean": 13.420493812285441,
+          "spl": 0.827680326478171
+        },
+        {
+          "id": "c28",
+          "episodes": 32,
+          "success_rate": 0.90625,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.09375,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 29,
+          "success_ci95": [
+            0.7578184527161212,
+            0.9675984487016337
+          ],
+          "success_time_mean": 12.952873563218391,
+          "success_path_mean": 12.959646656513113,
+          "spl": 0.8536940987531967
+        },
+        {
+          "id": "c20",
+          "episodes": 32,
+          "success_rate": 0.90625,
+          "collision_rate": 0.03125,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.0625,
+          "static_collision_rate": 0.03125,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 29,
+          "success_ci95": [
+            0.7578184527161212,
+            0.9675984487016337
+          ],
+          "success_time_mean": 10.767816091954023,
+          "success_path_mean": 13.018265033416162,
+          "spl": 0.8480561349791829
+        },
+        {
+          "id": "c14",
+          "episodes": 32,
+          "success_rate": 0.875,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.125,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 28,
+          "success_ci95": [
+            0.7193169451834978,
+            0.9502986561251991
+          ],
+          "success_time_mean": 15.146428571428572,
+          "success_path_mean": 17.536379671165992,
+          "spl": 0.6212548086943054
+        },
+        {
+          "id": "c09",
+          "episodes": 32,
+          "success_rate": 0.875,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.125,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 28,
+          "success_ci95": [
+            0.7193169451834978,
+            0.9502986561251991
+          ],
+          "success_time_mean": 15.527380952380952,
+          "success_path_mean": 15.622672681807728,
+          "spl": 0.6919605744830138
+        },
+        {
+          "id": "c30",
+          "episodes": 32,
+          "success_rate": 0.84375,
+          "collision_rate": 0.15625,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.0,
+          "static_collision_rate": 0.15625,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 27,
+          "success_ci95": [
+            0.682458504024696,
+            0.9313557971749429
+          ],
+          "success_time_mean": 7.2024691358024695,
+          "success_path_mean": 12.35370871644875,
+          "spl": 0.8290753466764214
+        },
+        {
+          "id": "c05",
+          "episodes": 32,
+          "success_rate": 0.84375,
+          "collision_rate": 0.15625,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.0,
+          "static_collision_rate": 0.15625,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 27,
+          "success_ci95": [
+            0.682458504024696,
+            0.9313557971749429
+          ],
+          "success_time_mean": 7.5851851851851855,
+          "success_path_mean": 12.539044134761614,
+          "spl": 0.818153909195206
+        },
+        {
+          "id": "c17",
+          "episodes": 32,
+          "success_rate": 0.8125,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.1875,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 26,
+          "success_ci95": [
+            0.6469084479862404,
+            0.9111045531043405
+          ],
+          "success_time_mean": 15.133333333333335,
+          "success_path_mean": 12.59379880416699,
+          "spl": 0.786018988505852
+        },
+        {
+          "id": "c21",
+          "episodes": 32,
+          "success_rate": 0.75,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.25,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 24,
+          "success_ci95": [
+            0.5789344100575552,
+            0.8674759908149096
+          ],
+          "success_time_mean": 16.631944444444446,
+          "success_path_mean": 13.41871539435378,
+          "spl": 0.6819806569760198
+        },
+        {
+          "id": "c13",
+          "episodes": 32,
+          "success_rate": 0.75,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.25,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 24,
+          "success_ci95": [
+            0.5789344100575552,
+            0.8674759908149096
+          ],
+          "success_time_mean": 17.168055555555558,
+          "success_path_mean": 14.013853331001007,
+          "spl": 0.6548534281980277
+        },
+        {
+          "id": "c04",
+          "episodes": 32,
+          "success_rate": 0.59375,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.40625,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 19,
+          "success_ci95": [
+            0.42260024875382873,
+            0.7448036515733456
+          ],
+          "success_time_mean": 17.275438596491227,
+          "success_path_mean": 16.495475752196548,
+          "spl": 0.4446058878695343
+        },
+        {
+          "id": "c19",
+          "episodes": 32,
+          "success_rate": 0.5,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.5,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 16,
+          "success_ci95": [
+            0.33630882869327483,
+            0.6636911713067252
+          ],
+          "success_time_mean": 17.141666666666666,
+          "success_path_mean": 12.41115531707083,
+          "spl": 0.48604273035796397
+        },
+        {
+          "id": "c25",
+          "episodes": 32,
+          "success_rate": 0.0625,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.9375,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 2,
+          "success_ci95": [
+            0.017310567031640967,
+            0.2014712314415458
+          ],
+          "success_time_mean": 17.633333333333333,
+          "success_path_mean": 12.439895287638878,
+          "spl": 0.06140540773836276
+        }
+      ]
+    },
+    {
+      "rung": 1,
+      "maps": 64,
+      "ranking": [
+        {
+          "id": "c29",
+          "episodes": 64,
+          "success_rate": 1.0,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.0,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 64,
+          "success_ci95": [
+            0.9433759402071946,
+            1.0
+          ],
+          "success_time_mean": 8.653645833333334,
+          "success_path_mean": 15.679296040518476,
+          "spl": 0.786580929218862
+        },
+        {
+          "id": "c27",
+          "episodes": 64,
+          "success_rate": 1.0,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.0,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 64,
+          "success_ci95": [
+            0.9433759402071946,
+            1.0
+          ],
+          "success_time_mean": 9.1421875,
+          "success_path_mean": 13.966130127022712,
+          "spl": 0.8771077700318098
+        },
+        {
+          "id": "c24",
+          "episodes": 64,
+          "success_rate": 1.0,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.0,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 64,
+          "success_ci95": [
+            0.9433759402071946,
+            1.0
+          ],
+          "success_time_mean": 9.177083333333334,
+          "success_path_mean": 14.298511417277517,
+          "spl": 0.8501530772451007
+        },
+        {
+          "id": "c16",
+          "episodes": 64,
+          "success_rate": 1.0,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.0,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 64,
+          "success_ci95": [
+            0.9433759402071946,
+            1.0
+          ],
+          "success_time_mean": 9.866666666666667,
+          "success_path_mean": 13.343860786475503,
+          "spl": 0.9072774285082401
+        },
+        {
+          "id": "c15",
+          "episodes": 64,
+          "success_rate": 1.0,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.0,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 64,
+          "success_ci95": [
+            0.9433759402071946,
+            1.0
+          ],
+          "success_time_mean": 10.164583333333333,
+          "success_path_mean": 17.142813985767436,
+          "spl": 0.720317083880672
+        },
+        {
+          "id": "c06",
+          "episodes": 64,
+          "success_rate": 1.0,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.0,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 64,
+          "success_ci95": [
+            0.9433759402071946,
+            1.0
+          ],
+          "success_time_mean": 12.025,
+          "success_path_mean": 17.612338739967804,
+          "spl": 0.7080939888076254
+        },
+        {
+          "id": "c22",
+          "episodes": 64,
+          "success_rate": 0.984375,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.015625,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 63,
+          "success_ci95": [
+            0.9166589839990573,
+            0.9972364580766624
+          ],
+          "success_time_mean": 10.686772486772487,
+          "success_path_mean": 16.120980958140873,
+          "spl": 0.7557715681541722
+        },
+        {
+          "id": "c08",
+          "episodes": 64,
+          "success_rate": 0.953125,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.046875,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 61,
+          "success_ci95": [
+            0.8710034625990631,
+            0.983930983213707
+          ],
+          "success_time_mean": 10.372131147540985,
+          "success_path_mean": 12.844103264228309,
+          "spl": 0.8977435072259189
+        }
+      ]
+    },
+    {
+      "rung": 2,
+      "maps": 128,
+      "ranking": [
+        {
+          "id": "c29",
+          "episodes": 128,
+          "success_rate": 1.0,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.0,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 128,
+          "success_ci95": [
+            0.9708630437264916,
+            1.0
+          ],
+          "success_time_mean": 8.552604166666667,
+          "success_path_mean": 15.484189000560056,
+          "spl": 0.800262942652412
+        },
+        {
+          "id": "c24",
+          "episodes": 128,
+          "success_rate": 1.0,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.0,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 128,
+          "success_ci95": [
+            0.9708630437264916,
+            1.0
+          ],
+          "success_time_mean": 9.178645833333333,
+          "success_path_mean": 14.280730050666794,
+          "spl": 0.8515985055255949
+        },
+        {
+          "id": "c27",
+          "episodes": 128,
+          "success_rate": 0.984375,
+          "collision_rate": 0.0,
+          "crash_rate": 0.0,
+          "timeout_rate": 0.015625,
+          "static_collision_rate": 0.0,
+          "dynamic_collision_rate": 0.0,
+          "success_count": 126,
+          "success_ci95": [
+            0.9448190233201829,
+            0.9957045502898559
+          ],
+          "success_time_mean": 8.939417989417988,
+          "success_path_mean": 13.733454378420516,
+          "spl": 0.8738644525242732
+        }
+      ]
+    }
+  ]
+}
