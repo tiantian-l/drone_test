@@ -97,15 +97,15 @@ def _env(scenario):
 
 
 def run_episode(task):
-    scenario, cid, params, seed = task
+    scenario, cid, params, seed, task_info = task
     env, settings = _env(scenario)
-    policy = AStarPolicy.from_environment(settings, AStarConfig(**params))
+    policy = AStarPolicy.from_environment(settings, AStarConfig(**params), task_info=task_info)
     env.EVAL_SEED = int(seed)
     env._eval_episode_counter = 0
     start = time.monotonic()
     obs, _ = env.reset()
     policy.reset()
-    policy.set_task(env.TARGET_POS)  # declared task information
+    policy.set_task(env.TARGET_POS)  # declared task information (ignored with task_info='none')
     assert int(env.CURRENT_EVAL_SEED) == int(seed)
     start_dist = float(np.linalg.norm(obs['state'][:3]))
     prev = np.asarray(obs['state'][:3], dtype=float)
@@ -179,8 +179,11 @@ class Store:
         return [self.rows[(scenario, cid, s)] for s in seeds]
 
 
+TASK_INFO = 'region'
+
+
 def evaluate(pool, store, scenario, cands, seeds, log):
-    tasks = [(scenario, c['id'], c['params'], s) for c in cands for s in seeds
+    tasks = [(scenario, c['id'], c['params'], s, TASK_INFO) for c in cands for s in seeds
              if (scenario, c['id'], s) not in store.rows]
     # Longest-first is unknown; interleave candidates for balanced load.
     tasks.sort(key=lambda t: (t[3], t[1]))
@@ -224,12 +227,16 @@ def main():
     ap.add_argument('--output', type=Path, required=True)
     ap.add_argument('--scenarios', nargs='+', choices=SCENARIOS, default=list(SCENARIOS))
     ap.add_argument('--workers', type=int, default=os.cpu_count())
+    ap.add_argument('--task-info', choices=('region', 'none'), default='region',
+                    help="'region': goal world position + flight region; 'none': observation only")
     ap.add_argument('--only-reproduce', type=str, default=None,
                     help='scenario:n — run the incumbent on n validation maps and stop')
     args = ap.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
+    global TASK_INFO
+    TASK_INFO = args.task_info
     cands = candidates()
-    plan = dict(algorithm='astar', search_space=SEARCH_SPACE,
+    plan = dict(algorithm='astar', task_info=args.task_info, search_space=SEARCH_SPACE,
                 fixed={k: INCUMBENT[k] for k in INCUMBENT if k not in SEARCH_SPACE},
                 sampler='scipy LatinHypercube', sampler_seed=SAMPLER_SEED, rungs=RUNGS,
                 ranking='success desc, collision+crash asc, mean success time asc',
@@ -237,8 +244,10 @@ def main():
                 policy_sha256=hashlib.sha256((ROOT / 'baselines/astar/policy.py').read_bytes()).hexdigest(),
                 env_sha256=hashlib.sha256((ROOT / 'drone_nav/envs/nav_aviary.py').read_bytes()).hexdigest())
     plan_path = args.output / 'plan.json'
-    if plan_path.exists() and json.loads(plan_path.read_text())['candidates'] != json.loads(json.dumps(cands)):
-        raise ValueError('Existing plan differs; refusing to mix runs')
+    if plan_path.exists():
+        old = json.loads(plan_path.read_text())
+        if old['candidates'] != json.loads(json.dumps(cands)) or old.get('task_info', 'region') != args.task_info:
+            raise ValueError('Existing plan differs; refusing to mix runs')
     plan_path.write_text(json.dumps(plan, indent=2) + '\n')
     store = Store(args.output / 'episodes.jsonl')
     logf = (args.output / 'progress.log').open('a')

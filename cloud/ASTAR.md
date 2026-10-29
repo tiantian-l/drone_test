@@ -1,9 +1,9 @@
 # Map-A* reference baseline
 
 A map-based classical baseline: online LiDAR occupancy grid + grid shortest-path
-replanning + pure-pursuit tracking + a local LiDAR safety layer. It complements
-the reactive APF baselines (branch `feature/apf`) with explicit memory and
-global planning. This branch is self-contained: it does not import APF or PPO
+replanning + pure-pursuit tracking + a local LiDAR safety layer. It provides
+explicit memory and global planning (the reactive APF baselines on branch
+`feature/apf` are no longer used in the thesis). This branch is self-contained: it does not import APF or PPO
 code.
 
 ## Information available to the planner
@@ -15,6 +15,16 @@ code.
   environment settings. This lets the planner place the flight-region boundary
   in its map. Report this in the thesis.
 - No simulator obstacle geometry and no obstacle velocities.
+
+### Variant without flight region (`--task-info none`, `TASK_INFO=none`)
+
+Observation only, like DreamerV3: the map is built in a goal-centred frame
+(`p_t = -dp_t`), `set_task` is ignored, the grid is a search window of
+`window_margin` (6 m) around start and goal with no keep-out band, and the
+ground height is estimated from rings of equal-height downward LiDAR returns.
+This variant quantifies how much of Map-A*'s performance comes from the
+declared task information; in development its additional failures were
+flight-region exits (crashes) near the start.
 
 Implementation: `baselines/astar/policy.py` (docstring describes the pipeline).
 The shortest path is computed with Dijkstra's algorithm on the cost grid
@@ -50,18 +60,28 @@ python cloud/report_baseline_tuning.py /projects/EEHPC-DEV-2026D07-102/dreamer/l
 
 Each task writes `<scenario>/<scenario>_frozen_params.json`.
 
+Variant without flight region (same budget, separate output root `astar_noregion`):
+
+```bash
+TASK_INFO=none sbatch --array=0-4 cloud/tune_astar_slurm.sh
+python cloud/report_baseline_tuning.py /projects/EEHPC-DEV-2026D07-102/dreamer/logdir/baseline_tuning/astar_noregion
+```
+
 ## 2. Frozen test (cluster, once, after tuning)
 
 ```bash
 sbatch --array=0-4 cloud/eval_astar_test_slurm.sh
+TASK_INFO=none sbatch --array=0-4 cloud/eval_astar_test_slurm.sh
 ```
 
 Do not change parameters after looking at test results. Run the DreamerV3
-re-evaluation and, if possible, the APF/APF-Tangent test on the same cluster so
-that all methods share machine and environment version.
+re-evaluation on the same cluster so that all methods share machine and
+environment version.
 
 ## Development note
 
 Default parameters were set while debugging on about 30 validation maps
 (seeds 170000–170007, 180000–180011, 190000–190005, 200000–200007,
-210000–210005). No test maps were used.
+210000–210005). The no-region variant was smoke-tested on 32 validation maps
+(first 8 seeds of 10_sparse, 10_dense, 20_dense, 20_sparse_dynamic) without
+changing any parameter. No test maps were used.

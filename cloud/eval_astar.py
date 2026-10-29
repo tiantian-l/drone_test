@@ -27,6 +27,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--scenario', choices=('10_sparse', '10_dense', '20_sparse', '20_dense', '20_sparse_dynamic'), default='10_sparse')
     parser.add_argument('--params', type=Path, help='JSON object containing AStarConfig fields')
+    parser.add_argument('--task-info', choices=('region', 'none'), default='region',
+                        help="'region': goal world position + flight region; 'none': observation only")
     parser.add_argument('--manifest', type=Path, help='Frozen final-test manifest; runs all 256 maps')
     parser.add_argument('--episodes', type=int, default=4, help='Validation maps (1..128); ignored for final test')
     parser.add_argument('--output', type=Path, required=True)
@@ -42,8 +44,8 @@ def main():
     if manifest:
         settings = test_environment(settings, manifest)
     params = AStarConfig(**json.loads(args.params.read_text())) if args.params else AStarConfig()
-    policy = AStarPolicy.from_environment(settings, params)
-    algorithm = 'Map-A*'
+    policy = AStarPolicy.from_environment(settings, params, task_info=args.task_info)
+    algorithm = 'Map-A*' if args.task_info == 'region' else 'Map-A* (no region)'
     from drone_nav.envs.nav_aviary import NavigationAviary
     kwargs = {k: v for k, v in settings.items() if k not in FRAMEWORK_KEYS}
     unknown = set(kwargs) - set(inspect.signature(NavigationAviary.__init__).parameters)
@@ -53,7 +55,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     write_json(args.output / 'config.json', dict(scenario=scenario, environment=settings,
                planner=asdict(params), algorithm=algorithm, sources=source_hashes(),
-               privileged_task_info=list(AStarPolicy.PRIVILEGED_TASK_INFO),
+               task_info=args.task_info, privileged_task_info=list(policy.PRIVILEGED_TASK_INFO),
                policy_sha256=hashlib.sha256((ROOT / 'baselines/astar/policy.py').read_bytes()).hexdigest(),
                git_revision=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
                evaluation_schedule=dict(workers=16 if manifest else 1, quota=16 if manifest else args.episodes, stride=16 if manifest else 1),
@@ -74,7 +76,7 @@ def main():
                 for slot in range(quota):
                     obs, _ = env.reset()
                     policy.reset()
-                    policy.set_task(env.TARGET_POS)  # declared task information
+                    policy.set_task(env.TARGET_POS)  # ignored with --task-info none
                     geometry = dict(seed=int(env.CURRENT_EVAL_SEED), start=env.INIT_XYZS[0].tolist(),
                                     goal=env.TARGET_POS.tolist(),
                                     static_boxes=[list(map(float, x)) for x in env._obstacle_specs],
@@ -124,7 +126,7 @@ def main():
     summary = summarize(records, settings['ctrl_freq'])
     summary.update(scenario=scenario, algorithm=algorithm, deterministic=True,
                    split='test' if manifest else 'validation',
-                   evaluation_protocol='map_astar_pid_reset_v1',
+                   evaluation_protocol='map_astar_pid_reset_v1', task_info=args.task_info,
                    geometry_sha256=hashlib.sha256((args.output / 'maps.jsonl').read_bytes()).hexdigest())
     write_json(args.output / 'summary.json', summary)
     for name, rows in [('episodes', records), ('summary', [summary])]:

@@ -124,3 +124,49 @@ def test_reset_clears_map():
     p.act(obs_at(p, pos, wall_scan(p, pos, 0.0)))
     p.reset()
     assert not (p.logodds != 0).any() and p.path is None and p.goal is None
+
+
+# ---------------------------------------------------------------- task_info='none'
+def make_none(**cfg):
+    return AStarPolicy(bounds=BOUNDS, config=AStarConfig(**cfg), task_info='none', **GEOM)
+
+
+def test_none_ignores_task_and_builds_goal_frame():
+    p = make_none()
+    p.set_task([5.0, 0.0, 1.0])
+    assert p.goal is None and p.PRIVILEGED_TASK_INFO == ()
+    state = np.zeros(9)
+    state[:3] = [10.0, 2.0, 0.5]  # goal displacement
+    a = p.act(dict(state=state, lidar=np.ones(p.scan_shape)))
+    assert np.allclose(p.goal, 0.0)
+    assert a[0] > 0.9
+    m = p.config.window_margin
+    assert np.isclose(p.x0, -10.0 - m) and p.nx == int(np.ceil((10.0 + 2 * m) / p.config.resolution))
+    assert not p.outside.any()
+
+
+def ground_scan(policy, height):
+    """Flat ground at `height` below the UAV, nothing else."""
+    scan = np.ones(policy.scan_shape)
+    for li, e in enumerate(policy.elevation[:, 0]):
+        if e < 0:
+            t = height / np.sin(-e)
+            if t < policy.range:
+                scan[li, :] = (t - policy.offset) / (policy.range - policy.offset)
+    return scan
+
+
+def test_none_ground_ring_is_not_an_obstacle():
+    p = make_none()
+    state = np.zeros(9)
+    state[:3] = [8.0, 0.0, -0.1]  # UAV 0.5 m above ground, unknown to the planner
+    for _ in range(5):
+        p.act(dict(state=state, lidar=ground_scan(p, 0.5)))
+    assert np.isfinite(p.ground)
+    assert not (p.logodds > p.config.occupied_threshold).any()
+
+
+def test_region_mode_marks_without_estimation():
+    p = make()
+    p.set_task([5.0, 0.0, 0.5])
+    assert p.ground == 0.0 and p.PRIVILEGED_TASK_INFO == ('goal_world', 'flight_region')

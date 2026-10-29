@@ -1,15 +1,20 @@
 """Map-based reference baseline: online LiDAR occupancy grid + grid shortest-path replanning.
 
-Information available to the controller
----------------------------------------
-* The same observation as the learned policies: goal displacement, world-frame
-  velocity, attitude (yaw used) and the 8x72 LiDAR scan.
-* Task specification (declared, not observed): the flight region B and the goal
-  position in the world frame, given once per episode via ``set_task``. Together
-  with the goal displacement this yields the UAV position p_t = p_g - dp_t.
-  Without the goal position the map could still be built in a goal-centred
-  frame, but the flight-region boundary could not be placed.
-* Nothing else: no simulator obstacle geometry, no obstacle velocities.
+Information available to the controller (``task_info``)
+-------------------------------------------------------
+* Always: the same observation as the learned policies -- goal displacement,
+  world-frame velocity, attitude (yaw used) and the 8x72 LiDAR scan. No
+  simulator obstacle geometry, no obstacle velocities.
+* ``task_info='region'`` (Map-A*): additionally the flight region B and the goal
+  position in the world frame, given once per episode via ``set_task``. The map
+  is built in the world frame (p_t = p_g - dp_t), the region boundary is a
+  keep-out band, and the ground is at z = 0.
+* ``task_info='none'`` (Map-A*, no region): observation only. The map is built
+  in a goal-centred frame (p_t = -dp_t); ``set_task`` is ignored. The grid is a
+  search window around start and goal (``window_margin``), not the flight
+  region, and has no keep-out band. The unknown ground height is estimated from
+  LiDAR: when at least ``ground_fraction`` of a downward layer's rays return at
+  the same lowest height, that height is taken as ground (running minimum).
 
 Pipeline (every control step, 30 Hz)
 -----------------------------------
@@ -71,6 +76,8 @@ class AStarConfig:
     miss_logodds: float = 0.4
     occupied_threshold: float = 0.5
     logodds_clamp: float = 3.5
+    window_margin: float = 6.0       # m, search window around start/goal ('none' only)
+    ground_fraction: float = 0.25    # ground detection threshold ('none' only)
 
     def __post_init__(self):
         for k, v in asdict(self).items():
@@ -84,11 +91,15 @@ class AStarConfig:
 
 
 class AStarPolicy:
-    PRIVILEGED_TASK_INFO = ('goal_world', 'flight_region')
+    TASK_INFO = {'region': ('goal_world', 'flight_region'), 'none': ()}
 
     def __init__(self, *, bounds, lidar_range=4.0, lidar_start_offset=0.06, lidar_hres_deg=10.0,
                  lidar_vfov=(-10.0, 20.0), lidar_vbeams=4, speed_limit=2.0, ctrl_freq=30,
-                 include_angular_velocity=False, config=None):
+                 include_angular_velocity=False, config=None, task_info='region'):
+        if task_info not in self.TASK_INFO:
+            raise ValueError(f'task_info must be one of {sorted(self.TASK_INFO)}')
+        self.task_info = task_info
+        self.PRIVILEGED_TASK_INFO = self.TASK_INFO[task_info]
         self.config = config or AStarConfig()
         self.bounds = np.asarray(bounds, dtype=float).reshape(3, 2)
         self.range, self.offset, self.speed_limit = float(lidar_range), float(lidar_start_offset), float(speed_limit)
@@ -103,15 +114,6 @@ class AStarPolicy:
         order = np.argsort(np.abs(self.elevation[:, 0]))
         self.carve_layers = np.sort(order[:2])
         r = self.config.resolution
-        (self.x0, x1), (self.y0, y1) = self.bounds[0], self.bounds[1]
-        self.nx = int(np.ceil((x1 - self.x0) / r))
-        self.ny = int(np.ceil((y1 - self.y0) / r))
-        cx = self.x0 + (np.arange(self.nx) + 0.5) * r
-        cy = self.y0 + (np.arange(self.ny) + 0.5) * r
-        gx, gy = np.meshgrid(cx, cy, indexing='ij')
-        margin = self.config.boundary_margin
-        self.outside = ((gx < self.x0 + margin) | (gx > x1 - margin) |
-                        (gy < self.y0 + margin) | (gy > y1 - margin))
         steps = np.arange(0.0, self.range + r, r / 2)
         self.carve_steps = steps  # sample spacing along rays
         k = int(np.ceil(self.config.hard_radius / r))
@@ -122,28 +124,70 @@ class AStarPolicy:
         self.reset()
 
     @classmethod
-    def from_environment(cls, settings, config=None):
+    def from_environment(cls, settings, config=None, task_info='region'):
         keys = ('lidar_range', 'lidar_start_offset', 'lidar_hres_deg', 'lidar_vfov', 'lidar_vbeams',
                 'speed_limit', 'ctrl_freq', 'include_angular_velocity')
         if not settings.get('lidar_enabled', True):
             raise ValueError('Planner requires LiDAR')
-        return cls(bounds=settings['bounds'], **{k: settings[k] for k in keys if k in settings}, config=config)
+        return cls(bounds=settings['bounds'], **{k: settings[k] for k in keys if k in settings},
+                   config=config, task_info=task_info)
 
     # ------------------------------------------------------------------ episode
-    def reset(self):
+    def _setup_grid(self, x0, x1, y0, y1, keep_out):
+        r = self.config.resolution
+        self.x0, self.y0 = float(x0), float(y0)
+        self.nx = int(np.ceil((x1 - x0) / r))
+        self.ny = int(np.ceil((y1 - y0) / r))
+        cx = self.x0 + (np.arange(self.nx) + 0.5) * r
+        cy = self.y0 + (np.arange(self.ny) + 0.5) * r
+        gx, gy = np.meshgrid(cx, cy, indexing='ij')
+        if keep_out:
+            m = self.config.boundary_margin
+            self.outside = (gx < x0 + m) | (gx > x1 - m) | (gy < y0 + m) | (gy > y1 - m)
+        else:
+            self.outside = np.zeros(gx.shape, dtype=bool)
         self.logodds = np.zeros((self.nx, self.ny), dtype=np.float32)
         self.hit_top = np.full((self.nx, self.ny), -np.inf, dtype=np.float32)
+        self._clear = np.full((self.nx, self.ny), np.inf)
+
+    def reset(self):
         self._previous_command = np.zeros(3)
         self.path = None
         self.path_index = 0
         self.since_plan = np.inf
-        self._clear = np.full((self.nx, self.ny), np.inf)
         self.goal = None
+        self.ground = 0.0 if self.task_info == 'region' else -np.inf
         self.diagnostics = {}
+        if self.task_info == 'region':
+            (x0, x1), (y0, y1) = self.bounds[0], self.bounds[1]
+            self._setup_grid(x0, x1, y0, y1, keep_out=True)
+        else:
+            self.nx = self.ny = 0  # built from the first observation
 
     def set_task(self, goal_world):
-        """Declared task information: goal position in the world frame."""
-        self.goal = np.asarray(goal_world, dtype=float).copy()
+        """Declared task information (goal in world frame); ignored with task_info='none'."""
+        if self.task_info == 'region':
+            self.goal = np.asarray(goal_world, dtype=float).copy()
+
+    def _start_goal_frame(self, state):
+        """'none': goal-centred frame and a search window around start and goal."""
+        self.goal = np.zeros(3)
+        start = -state[:3]
+        m = self.config.window_margin
+        self._setup_grid(min(0.0, start[0]) - m, max(0.0, start[0]) + m,
+                         min(0.0, start[1]) - m, max(0.0, start[1]) + m, keep_out=False)
+
+    def _update_ground(self, pos, scan):
+        """Estimate the ground height from rings of equal-height downward returns."""
+        dist = self.offset + scan * (self.range - self.offset)
+        for layer in np.flatnonzero(self.elevation[:, 0] < np.deg2rad(-3.0)):
+            hit = scan[layer] < 1.0
+            if hit.sum() < self.config.ground_fraction * scan.shape[1]:
+                continue
+            hz = pos[2] + np.sin(self.elevation[layer, 0]) * dist[layer][hit]
+            low = hz.min()
+            if np.sum(hz < low + 0.05) >= self.config.ground_fraction * scan.shape[1]:
+                self.ground = low if not np.isfinite(self.ground) else min(self.ground, low)
 
     # ------------------------------------------------------------------ helpers
     def _cell(self, xy):
@@ -168,7 +212,7 @@ class AStarPolicy:
         hx = pos[0] + horiz * np.cos(az)
         hy = pos[1] + horiz * np.sin(az)
         hz = pos[2] + np.sin(el) * dist
-        hit = (scan < 1.0) & (hz > cfg.ground_filter)
+        hit = (scan < 1.0) & (hz > self.ground + cfg.ground_filter)
         # Free-space carving with near-horizontal layers (before marking hits).
         for layer in self.carve_layers:
             d = np.where(scan[layer] < 1.0, dist[layer], self.range) * np.cos(el[layer, 0])
@@ -273,8 +317,6 @@ class AStarPolicy:
 
     # ------------------------------------------------------------------ control
     def act(self, obs):
-        if self.goal is None:
-            raise RuntimeError('set_task(goal_world) must be called after each reset')
         if isinstance(obs, dict):
             state = np.asarray(obs['state'], dtype=float)
             scan = np.asarray(obs['lidar'], dtype=float)
@@ -282,8 +324,14 @@ class AStarPolicy:
             flat = np.asarray(obs, dtype=float)
             state, scan = flat[:self.state_size], flat[self.state_size:]
         scan = scan.reshape(self.scan_shape)
+        if self.goal is None:
+            if self.task_info == 'region':
+                raise RuntimeError('set_task(goal_world) must be called after each reset')
+            self._start_goal_frame(state)
         cfg = self.config
         pos = self.goal - state[:3]
+        if self.task_info == 'none':
+            self._update_ground(pos, scan)
         self._update_map(pos, state[8], scan)
         self.since_plan += self.dt
         clear = None
@@ -334,5 +382,6 @@ class AStarPolicy:
             action[:3] = velocity / norm
             action[3] = min(norm, self.speed_limit) / self.speed_limit
         self.diagnostics = dict(event=event, local_clearance=local_clear, nearest_return=nearest,
+                                ground=float(self.ground) if np.isfinite(self.ground) else None,
                                 path_len=None if self.path is None else int(len(self.path) - self.path_index))
         return action
