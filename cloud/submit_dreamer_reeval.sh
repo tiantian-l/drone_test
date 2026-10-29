@@ -16,7 +16,11 @@ cd "$(dirname "$0")/.."
 table="${TABLE:-cloud/dreamer_checkpoints.tsv}"
 suite="${TEST_SUITE_DIR:-$PWD/cloud/test_maps_pidreset_v2}"
 out_root="${OUT_ROOT:-/projects/EEHPC-DEV-2026D07-102/dreamer/logdir/final_eval_pidreset_v2}"
-time_limit="${EVAL_TIME_LIMIT:-02:00:00}"
+# Short requests schedule (backfill) much faster. Per-scenario defaults; override
+# with EVAL_TIME_LIMIT (all jobs), TIME_10M / TIME_20M, and EVAL_CPUS.
+time_10m="${TIME_10M:-00:30:00}"
+time_20m="${TIME_20M:-01:00:00}"
+cpus="${EVAL_CPUS:-16}"
 [[ -f "$table" ]] || { echo "Missing $table" >&2; exit 1; }
 resolve() {  # run_dir checkpoint_name|path -> checkpoint path
   local run_dir="$1" name="$2"
@@ -42,9 +46,14 @@ for scenario in "${static[@]}" 20_sparse_dynamic; do
 done
 submit() {
   local label="$1" scenario="$2"
-  local out="$out_root/$scenario/$label"
-  if [[ -e "$out" ]]; then echo "skip $label -> $scenario: $out exists"; return; fi
-  local cmd=(sbatch --parsable --export=ALL --time="$time_limit" --job-name="reeval_${label}_${scenario}"
+  local base="$out_root/$scenario/$label" out n=1
+  # A finished result has a summary; skip it. A directory without one is a
+  # failed/timed-out attempt: keep it and write the retry to <label>_retryN.
+  if compgen -G "$base*/*__summary.json" > /dev/null; then echo "skip $label -> $scenario: finished"; return; fi
+  out="$base"
+  while [[ -e "$out" ]]; do out="${base}_retry${n}"; n=$((n + 1)); done
+  local time_limit="${EVAL_TIME_LIMIT:-$([[ $scenario == 10_* ]] && echo "$time_10m" || echo "$time_20m")}"
+  local cmd=(sbatch --parsable --export=ALL --time="$time_limit" --cpus-per-task="$cpus" --job-name="reeval_${label}_${scenario}"
              cloud/eval_final_slurm.sh "$scenario" "${run[$label]}" "${ckpt[$label]}" "$out")
   if [[ -n "${DRY_RUN:-}" ]]; then
     echo "POLICY_LABEL=${label}_pidreset TEST_SUITE_DIR=$suite ${cmd[*]}"

@@ -42,8 +42,13 @@ def load(prefix_glob, base):
     return dict(rows=rows, summary=json.loads(summary.read_text()), path=ep, copies=len(eps))
 
 
+def ok(r):
+    # Records store outcome flags as bool or as 0.0/1.0 floats.
+    return bool(float(r['success']))
+
+
 def failed_early(r):
-    return (not r['success']) and int(r['episode_length']) <= EARLY_STEPS
+    return (not ok(r)) and int(float(r['episode_length'])) <= EARLY_STEPS
 
 
 def main():
@@ -60,7 +65,7 @@ def main():
             stems[label] = Path(ckpt).name.removesuffix('.ckpt')
     new, old = {}, {}
     for label, scen in MATRIX:
-        new[label, scen] = load('*', args.new_root / scen / label)
+        new[label, scen] = load(f'{label}*/*', args.new_root / scen)  # includes <label>_retryN
         old[label, scen] = load(f'job_*/*__{stems[label]}', args.old_root / scen)
     out = ['# DreamerV3 re-evaluation after the PID-reset fix', '',
            f'New: `{args.new_root}`  Old: `{args.old_root}`', '',
@@ -73,15 +78,15 @@ def main():
         if n is None:
             out.append(f'| {key[0]} | {NAME[key[1]]} | – | missing | | | | | | |')
             continue
-        ns = sum(r['success'] for r in n['rows'].values()) / len(n['rows'])
+        ns = sum(ok(r) for r in n['rows'].values()) / len(n['rows'])
         if o is None:
             out.append(f'| {key[0]} | {NAME[key[1]]} | not found | {100*ns:.1f} | | | | | – / '
                        f"{sum(map(failed_early, n['rows'].values()))} | |")
             continue
         seeds = sorted(set(n['rows']) & set(o['rows']))
-        os_ = sum(o['rows'][s]['success'] for s in seeds) / len(seeds)
-        gained = sum(n['rows'][s]['success'] and not o['rows'][s]['success'] for s in seeds)
-        lost = sum(o['rows'][s]['success'] and not n['rows'][s]['success'] for s in seeds)
+        os_ = sum(ok(o['rows'][s]) for s in seeds) / len(seeds)
+        gained = sum(ok(n['rows'][s]) and not ok(o['rows'][s]) for s in seeds)
+        lost = sum(ok(o['rows'][s]) and not ok(n['rows'][s]) for s in seeds)
         geo = n['summary'].get('geometry_sha256') == o['summary'].get('geometry_sha256')
         early = (sum(failed_early(o['rows'][s]) for s in seeds), sum(failed_early(n['rows'][s]) for s in seeds))
         note = '' if len(seeds) == 256 else f' ({len(seeds)} common maps)'
