@@ -95,7 +95,9 @@ def main():
         else:
             o, a, u = (f'{100 * v / n:.1f}' for v in r['split'])
             agree = f'{100 * r["agree"]:.1f}%'
-            sources.append(f'- {label} {NAME[scen]}: `{r["diag"]}`')
+            src = f'- {label} {NAME[scen]}: `{r["diag"]}`'
+            if src not in sources:
+                sources.append(src)
         dyn = scen.endswith('dynamic')
         sc = pc('static_collision') if dyn else '–'
         mc = pc('dynamic_collision') if dyn else '–'
