@@ -31,10 +31,6 @@ export PYTHONNOUSERSITE=1
 export PYTHONPATH="$PWD:$PWD/third_party/gym-pybullet-drones:${PYTHONPATH:-}"
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 py="${CONDA_ROOT}/envs/${ENV_NAME}/bin/python"
-if ! "$py" -c "import skimage" 2>/dev/null; then
-  echo "scikit-image is missing. Install once on a login node: $py -m pip install scikit-image" >&2
-  exit 2
-fi
 mkdir -p "$out_root"
 echo "Tuning Map-A* (task_info=$task_info) on $scenario with ${SLURM_CPUS_PER_TASK} workers -> $out_root/$scenario"
 exec "$py" -W ignore cloud/tune_astar.py --task-info "$task_info" --scenarios "$scenario" \

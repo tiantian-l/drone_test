@@ -27,9 +27,12 @@ declared task information; in development its additional failures were
 flight-region exits (crashes) near the start.
 
 Implementation: `baselines/astar/policy.py` (docstring describes the pipeline).
-The shortest path is computed with Dijkstra's algorithm on the cost grid
-(`skimage.graph.MCP_Geometric`); A* with an admissible heuristic returns a path
-of the same cost.
+The shortest path is computed with A* on the cost grid (`astar_grid`,
+8-connected, octile-distance heuristic; moving between neighbouring cells a and b
+costs step length x (c_a + c_b) / 2, every cell cost is >= 1, so the heuristic is
+admissible and the path is optimal). `cloud/test_astar.py` checks optimality
+against a Dijkstra reference (scikit-image, used only by that test; skipped if
+not installed). The planner itself needs only numpy/scipy.
 
 ## Environment version
 
@@ -48,8 +51,9 @@ contains the fix (checked on 10_dense).
 ## Setup (once)
 
 ```bash
-$CONDA_ROOT/envs/drone/bin/python -m pip install scikit-image
 python -m pytest -q cloud/test_astar.py
+# optional, enables the A*-vs-Dijkstra optimality test:
+# $CONDA_ROOT/envs/drone/bin/python -m pip install scikit-image
 ```
 
 ## 1. Validation tuning (cluster)

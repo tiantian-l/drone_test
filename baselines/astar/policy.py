@@ -31,10 +31,10 @@ Pipeline (every control step, 30 Hz)
    d < hard_radius are impassable; cells with d < inflation are passable only
    at a large penalty (so the UAV can leave them); elsewhere the cost decays
    with clearance. A minimum-cost 8-connected path from the UAV to the goal
-   cell is computed with Dijkstra's algorithm on this cost grid
-   (skimage.graph.MCP_Geometric). With an admissible heuristic, A* returns a
-   path of the same cost; Dijkstra is used only because a compiled
-   implementation is available.
+   cell is computed with A* (``astar_grid``): moving between neighbouring
+   cells a and b costs step_length * (c_a + c_b) / 2 (step length 1 or sqrt 2
+   in cells); the heuristic is the octile distance to the goal, which is
+   admissible and consistent because every cell cost is at least 1.
 3. Tracking. Pure pursuit on the path with a look-ahead distance; horizontal
    speed is limited by the cruise speed, the clearance around the UAV and the
    remaining goal distance. Altitude tracks the goal altitude with a
@@ -48,7 +48,68 @@ Pipeline (every control step, 30 Hz)
 from dataclasses import asdict, dataclass
 import numpy as np
 from scipy import ndimage
-from skimage.graph import MCP_Geometric
+import heapq
+import math
+
+_SQRT2 = math.sqrt(2.0)
+_NEIGHBOURS = ((-1, -1, _SQRT2), (-1, 0, 1.0), (-1, 1, _SQRT2), (0, -1, 1.0),
+               (0, 1, 1.0), (1, -1, _SQRT2), (1, 0, 1.0), (1, 1, _SQRT2))
+
+
+def astar_grid(cost, start, goal):
+    """A* on an 8-connected grid with per-cell costs (>= 1, inf = blocked).
+
+    Edge cost between neighbours a, b: step * (cost[a] + cost[b]) / 2, with
+    step 1 (axis) or sqrt(2) (diagonal). Heuristic: octile distance to the
+    goal, a lower bound because every finite cost is >= 1, so the returned
+    path has minimum total cost. Returns (path as (N, 2) array of cells,
+    total cost) or (None, inf) if the goal is unreachable.
+    """
+    nx, ny = cost.shape
+    c = cost.ravel().tolist()
+    inf = math.inf
+    s = start[0] * ny + start[1]
+    t = goal[0] * ny + goal[1]
+    gi, gj = goal
+    g = [inf] * (nx * ny)
+    parent = [-1] * (nx * ny)
+    closed = bytearray(nx * ny)
+    g[s] = 0.0
+
+    def h(i, j):
+        dx, dy = abs(i - gi), abs(j - gj)
+        return dx + dy + (_SQRT2 - 2.0) * min(dx, dy)
+
+    heap = [(h(*start), 0.0, s)]
+    while heap:
+        _, gu, u = heapq.heappop(heap)
+        if closed[u]:
+            continue
+        closed[u] = 1
+        if u == t:
+            break
+        ui, uj = divmod(u, ny)
+        cu = c[u]
+        for di, dj, step in _NEIGHBOURS:
+            vi, vj = ui + di, uj + dj
+            if vi < 0 or vi >= nx or vj < 0 or vj >= ny:
+                continue
+            v = vi * ny + vj
+            cv = c[v]
+            if closed[v] or cv == inf:
+                continue
+            ng = gu + step * 0.5 * (cu + cv)
+            if ng < g[v]:
+                g[v] = ng
+                parent[v] = u
+                heapq.heappush(heap, (ng + h(vi, vj), ng, v))
+    if not closed[t]:
+        return None, inf
+    cells = [t]
+    while cells[-1] != s:
+        cells.append(parent[cells[-1]])
+    cells.reverse()
+    return np.array([divmod(x, ny) for x in cells]), g[t]
 
 
 @dataclass(frozen=True)
@@ -258,12 +319,10 @@ class AStarPolicy:
         if not np.isfinite(cost[gi, gj]):
             cost[gi, gj] = 100.0
         self._clear = clear
-        mcp = MCP_Geometric(cost, fully_connected=True)
-        cum, _ = mcp.find_costs([(si, sj)], [(gi, gj)])
-        if not np.isfinite(cum[gi, gj]):
+        cells, total = astar_grid(cost, (si, sj), (gi, gj))
+        if cells is None:
             self.path = None
             return clear
-        cells = np.asarray(mcp.traceback((gi, gj)))
         self.path = self._world(cells[:, 0], cells[:, 1])
         self.path_index = 0
         return clear

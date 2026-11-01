@@ -170,3 +170,36 @@ def test_region_mode_marks_without_estimation():
     p = make()
     p.set_task([5.0, 0.0, 0.5])
     assert p.ground == 0.0 and p.PRIVILEGED_TASK_INFO == ('goal_world', 'flight_region')
+
+
+# ---------------------------------------------------------------- A* search
+def test_astar_is_optimal_against_dijkstra():
+    """A* must return paths of exactly the minimum cost (reference: Dijkstra)."""
+    graph = pytest.importorskip('skimage.graph')  # reference only, not a runtime dependency
+    from baselines.astar.policy import astar_grid
+    rng = np.random.default_rng(0)
+    for _ in range(200):
+        nx, ny = rng.integers(5, 50, size=2)
+        cost = 1.0 + rng.exponential(2.0, (nx, ny))
+        cost[rng.random((nx, ny)) < rng.uniform(0.0, 0.35)] = np.inf
+        start = (int(rng.integers(nx)), int(rng.integers(ny)))
+        goal = (int(rng.integers(nx)), int(rng.integers(ny)))
+        cost[start] = 1.0
+        if not np.isfinite(cost[goal]):
+            cost[goal] = 100.0
+        path, total = astar_grid(cost, start, goal)
+        reference, _ = graph.MCP_Geometric(cost, fully_connected=True).find_costs([start], [goal])
+        assert np.isfinite(total) == np.isfinite(reference[goal])
+        if path is not None:
+            assert total == pytest.approx(reference[goal], rel=1e-9)
+            assert tuple(path[0]) == start and tuple(path[-1]) == goal
+            steps = np.abs(np.diff(path, axis=0))
+            assert steps.max() <= 1 and (steps.sum(axis=1) > 0).all()
+
+
+def test_astar_unreachable_goal():
+    from baselines.astar.policy import astar_grid
+    cost = np.ones((5, 5))
+    cost[:, 2] = np.inf
+    path, total = astar_grid(cost, (0, 0), (0, 4))
+    assert path is None and total == np.inf
